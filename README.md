@@ -41,16 +41,16 @@ pip install -r requirements.txt
 
 ```env
 # 达梦数据库配置
-DM_HOST=192.168.31.157
+DM_HOST=
 DM_PORT=5236
-DM_USER=SEEYON0725
-DM_PASSWORD=seeyon@123
-DM_DATABASE=SEEYON0725
+DM_USER=
+DM_PASSWORD=
+DM_DATABASE=
 
 # Elasticsearch配置
-ES_HOST=https://192.168.31.141:9200
+ES_HOST=
 ES_USER=elastic
-ES_PASSWORD=dyWYSbEAXTdkgWtCkiBh
+ES_PASSWORD=
 ```
 
 ### 3. 启动应用
@@ -134,4 +134,5 @@ python app.py
 2. **ES连接失败**: 检查ES服务状态和认证信息
 3. **同步失败**: 检查表单配置是否正确，数据表是否存在
 4. **搜索无结果**: 确认数据已经同步到ES，检查索引是否创建成功# es_admin
+# es_admin
 # es_admin
