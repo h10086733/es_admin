@@ -1,4 +1,3 @@
-import json
 from datetime import datetime
 from config.database import es_conn
 from app.models.form_model import FormModel
@@ -88,6 +87,9 @@ class SyncService:
         
         fields = FormModel.get_form_fields(form_id)
         
+        # 获取字段标签映射用于数据转换
+        field_labels = FormModel.get_field_labels(form_id)
+        
         # 创建索引映射
         if not self.create_index_mapping(form_id, fields):
             return {"success": False, "message": "创建索引失败"}
@@ -127,13 +129,20 @@ class SyncService:
                         "sync_time": datetime.now().isoformat()
                     }
                     
-                    # 添加所有字段数据
+                    # 添加所有字段数据，并转换字段名为中文标签
                     for key, value in record.items():
                         if value is not None:
-                            if isinstance(value, datetime):
-                                doc[key] = value.isoformat()
-                            else:
-                                doc[key] = str(value)
+                            # 转换字段名为中文标签
+                            display_name = self.get_field_display_name(key, field_labels)
+                            
+                            # 跳过不需要的系统字段
+                            if self.should_skip_field(key):
+                                continue
+                            
+                            # 格式化值
+                            formatted_value = self.format_field_value(key, value)
+                            if formatted_value is not None:
+                                doc[display_name] = formatted_value
                     
                     # 添加到bulk操作
                     bulk_body.extend([
@@ -281,28 +290,31 @@ class SyncService:
             )
             
             hits = []
-            # 批量获取表单名称，减少数据库查询次数
-            form_names_cache = {}
+            # 缓存表单名称，减少数据库查询
+            form_cache = {}
             
             for hit in response['hits']['hits']:
                 source = hit['_source']
                 form_id = source['form_id']
                 
-                # 使用缓存获取表单名称
-                if form_id not in form_names_cache:
+                # 获取表单名称（使用缓存）
+                if form_id not in form_cache:
                     try:
                         form = FormModel.get_form_by_id(form_id)
-                        form_names_cache[form_id] = form['name'] if form else "未知表单"
+                        form_cache[form_id] = form['name'] if form else "未知表单"
                     except:
-                        form_names_cache[form_id] = "未知表单"
+                        form_cache[form_id] = "未知表单"
+                
+                # 提取显示数据（已经是格式化的标签和值）
+                display_data = self.extract_display_data(source)
                 
                 hit_data = {
                     "score": hit['_score'],
                     "form_id": form_id,
-                    "form_name": form_names_cache[form_id],
+                    "form_name": form_cache[form_id],
                     "table_name": source['table_name'],
                     "record_id": source['record_id'],
-                    "data": source,
+                    "data": display_data,
                     "highlight": hit.get('highlight', {})
                 }
                 hits.append(hit_data)
@@ -332,3 +344,81 @@ class SyncService:
                 error_msg = "索引不存在，请先同步数据"
             
             return {"hits": [], "total": 0, "error": error_msg}
+    
+    def extract_display_data(self, source):
+        """提取用于显示的数据（数据已在ES中格式化）"""
+        # 定义系统字段，不在搜索结果中显示
+        system_fields = {
+            'form_id', 'table_name', 'record_id', 'sync_time'
+        }
+        
+        display_data = {}
+        for key, value in source.items():
+            # 跳过系统字段
+            if key in system_fields:
+                continue
+                
+            # 跳过空值
+            if value is None or value == '':
+                continue
+                
+            display_data[key] = value
+        
+        return display_data
+    
+    def get_field_display_name(self, field_name, field_labels):
+        """获取字段显示名称"""
+        # 优先使用配置的标签
+        if field_name in field_labels:
+            return field_labels[field_name]
+        
+        # 处理特殊系统字段
+        system_field_mapping = {
+            'start_date': '创建时间',
+            'modify_date': '修改时间',
+            'start_member_id': '创建人',
+            'modify_member_id': '修改人',
+            'approve_member_id': '审核人',
+            'ratify_member_id': '核定人'
+        }
+        
+        return system_field_mapping.get(field_name, field_name)
+    
+    def should_skip_field(self, field_name):
+        """判断是否应该跳过字段"""
+        hidden_fields = {
+            'ID', 'id', 'form_id', 'table_name', 'record_id', 'sync_time',
+            'state', 'sort', 'ratifyflag', 'finishedflag', 'approve_date', 
+            'ratify_date'
+        }
+        return field_name in hidden_fields
+    
+    def format_field_value(self, field_name, value):
+        """格式化字段值"""
+        # 跳过空值
+        if value is None or value == '':
+            return None
+            
+        # 处理日期时间字段
+        if isinstance(value, datetime):
+            return value.isoformat()
+        
+        # 处理成员字段，转换为姓名
+        if field_name.endswith('_member_id'):
+            try:
+                member_name = FormModel.get_member_name(value)
+                return member_name if member_name else str(value)
+            except:
+                return str(value)
+        
+        # 格式化日期字段显示
+        if field_name in ['start_date', 'modify_date'] and isinstance(value, str):
+            try:
+                if 'T' in value:
+                    date_part = value.split('T')[0]
+                    time_part = value.split('T')[1].split('.')[0] if '.' in value.split('T')[1] else value.split('T')[1]
+                    return f"{date_part} {time_part}"
+            except:
+                pass
+        
+        return str(value)

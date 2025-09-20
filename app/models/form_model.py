@@ -179,3 +179,55 @@ class FormModel:
         """获取最后同步时间"""
         # 这里可以存储在文件或数据库中，暂时返回None表示全量同步
         return None
+    
+    @staticmethod
+    def get_field_labels(form_id):
+        """获取表单字段的中文标签映射"""
+        form = FormModel.get_form_by_id(form_id)
+        if not form:
+            return {}
+        
+        try:
+            field_info = form['field_info']
+            field_labels = {}
+            
+            if 'front_formmain' in field_info:
+                fields = field_info['front_formmain'].get('fieldInfo', [])
+                for field in fields:
+                    field_name = field.get('name', field.get('columnName', ''))
+                    # 优先使用 display 字段，然后是 label 和 title
+                    field_label = field.get('display', field.get('label', field.get('title', '')))
+                    if field_name and field_label:
+                        field_labels[field_name] = field_label
+            
+            return field_labels
+        except Exception as e:
+            print(f"获取字段标签失败: {e}")
+            return {}
+    
+    @staticmethod
+    def get_member_name(member_id):
+        """根据成员ID获取成员姓名"""
+        if not member_id or member_id == 0:
+            return None
+            
+        conn = dm_conn.connect()
+        if not conn:
+            return None
+        
+        try:
+            cursor = conn.cursor()
+            sql = "SELECT NAME FROM ORG_MEMBER WHERE ID = ?"
+            cursor.execute(sql, (member_id,))
+            result = cursor.fetchone()
+            cursor.close()
+            
+            if result:
+                return result[0]
+            return None
+            
+        except Exception as e:
+            print(f"获取成员姓名失败: {e}")
+            return None
+        finally:
+            conn.close()

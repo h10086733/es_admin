@@ -388,7 +388,7 @@
                             <div class="result-score">匹配度: ${hit.score.toFixed(2)}</div>
                         </div>
                         <div class="result-meta">
-                            表单ID: ${hit.form_id} | 表名: ${hit.table_name} | 记录ID: ${hit.record_id}
+                            表名: ${hit.table_name}
                         </div>
                         <div class="result-content">
                             ${formatRecordData(hit.data, hit.highlight)}
@@ -407,15 +407,13 @@
         function formatRecordData(data, highlight) {
             let html = '<table style="width: 100%; border-collapse: collapse;">';
             
-            // 过滤掉系统字段
-            const systemFields = ['form_id', 'table_name', 'record_id', 'sync_time'];
-            
+            // 后端已经处理了字段翻译和系统字段过滤，直接显示即可
             for (const [key, value] of Object.entries(data)) {
-                if (systemFields.includes(key) || !value) continue;
+                if (!value) continue;
                 
                 let displayValue = value;
                 
-                // 检查是否有高亮
+                // 检查是否有高亮（注意：高亮的key可能是原始字段名）
                 if (highlight && highlight[key]) {
                     displayValue = highlight[key][0];
                 }
