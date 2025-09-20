@@ -57,16 +57,17 @@ class ESConnection:
             
             self.client = Elasticsearch(
                 [self.host],
-                basic_auth=(self.user, self.password),
-                ssl_context=ssl_context,
-                verify_certs=False
+                http_auth=(self.user, self.password),
+                verify_certs=False,
+                ssl_show_warn=False
             )
-            # 测试连接
-            if self.client.ping():
+            # 测试连接 - 使用info()替代ping()以兼容ES 8.x
+            try:
+                info = self.client.info()
                 print("Elasticsearch连接成功")
                 return self.client
-            else:
-                print("Elasticsearch连接失败")
+            except Exception as test_e:
+                print(f"Elasticsearch连接失败: {test_e}")
                 return None
         except Exception as e:
             print(f"Elasticsearch连接失败: {e}")

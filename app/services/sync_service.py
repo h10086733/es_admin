@@ -6,6 +6,8 @@ from app.models.form_model import FormModel
 class SyncService:
     def __init__(self):
         self.es_client = es_conn.connect()
+        if not self.es_client:
+            raise Exception("无法连接到Elasticsearch")
     
     def create_index_mapping(self, form_id, fields):
         """为表单创建ES索引映射"""
