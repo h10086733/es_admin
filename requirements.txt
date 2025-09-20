@@ -1,0 +1,8 @@
+Flask==2.3.2
+elasticsearch==8.9.0
+dmPython==2.5.22
+pymongo==4.4.1
+requests==2.31.0
+python-dotenv==1.0.0
+APScheduler==3.10.1
+flask-cors==4.0.0

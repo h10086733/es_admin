@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ES数据管理系统</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .header {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        
+        .tab {
+            padding: 10px 20px;
+            background: #fff;
+            border: 1px solid #ddd;
+            cursor: pointer;
+            margin-right: 5px;
+            border-radius: 4px 4px 0 0;
+        }
+        
+        .tab.active {
+            background: #007bff;
+            color: white;
+            border-color: #007bff;
+        }
+        
+        .tab-content {
+            display: none;
+            background: #fff;
+            padding: 20px;
+            border-radius: 0 8px 8px 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .search-section {
+            margin-bottom: 30px;
+        }
+        
+        .search-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .search-input {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        
+        .search-btn, .sync-btn {
+            padding: 12px 24px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        
+        .search-btn:hover, .sync-btn:hover {
+            background: #0056b3;
+        }
+        
+        .search-btn:disabled, .sync-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .results {
+            margin-top: 20px;
+        }
+        
+        .result-item {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 10px;
+        }
+        
+        .result-header {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .result-title {
+            font-weight: bold;
+            color: #007bff;
+        }
+        
+        .result-score {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .result-meta {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        
+        .result-content {
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .highlight {
+            background: yellow;
+            padding: 2px 4px;
+            border-radius: 2px;
+        }
+        
+        .sync-section {
+            margin-bottom: 30px;
+        }
+        
+        .forms-list {
+            margin-top: 20px;
+        }
+        
+        .form-item {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .form-info h4 {
+            margin-bottom: 5px;
+        }
+        
+        .form-info .form-meta {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .form-actions {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 14px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        .btn-primary {
+            background: #007bff;
+            color: white;
+        }
+        
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #0056b3;
+        }
+        
+        .btn-success:hover {
+            background: #1e7e34;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        
+        .success {
+            background: #d4edda;
+            color: #155724;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .page-btn {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            background: white;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        
+        .page-btn:hover {
+            background: #f8f9fa;
+        }
+        
+        .page-btn.active {
+            background: #007bff;
+            color: white;
+            border-color: #007bff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>ES数据管理系统</h1>
+            <p>表单数据同步与搜索管理</p>
+        </div>
+        
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('search')">数据搜索</div>
+            <div class="tab" onclick="switchTab('sync')">数据同步</div>
+        </div>
+        
+        <!-- 搜索标签页 -->
+        <div id="search-tab" class="tab-content active">
+            <div class="search-section">
+                <h3>数据搜索</h3>
+                <div class="search-box">
+                    <input type="text" id="searchInput" class="search-input" placeholder="输入搜索关键词，如：台式电脑2">
+                    <button class="search-btn" onclick="performSearch()">搜索</button>
+                </div>
+                
+                <div id="searchResults" class="results"></div>
+                <div id="pagination" class="pagination"></div>
+            </div>
+        </div>
+        
+        <!-- 同步标签页 -->
+        <div id="sync-tab" class="tab-content">
+            <div class="sync-section">
+                <h3>数据同步管理</h3>
+                <div style="margin-bottom: 20px;">
+                    <div class="search-box">
+                        <input type="text" id="formSearchInput" class="search-input" placeholder="搜索表单名称...">
+                        <button class="search-btn" onclick="searchForms()">搜索</button>
+                        <button class="sync-btn" onclick="loadForms(1)" style="margin-left: 10px;">刷新列表</button>
+                        <button class="sync-btn" onclick="syncAllForms()" style="margin-left: 10px;">同步所有表单</button>
+                    </div>
+                </div>
+                
+                <div id="formsList" class="forms-list"></div>
+                <div id="formsPagination" class="pagination"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentPage = 0;
+        let currentQuery = '';
+        let currentFormsPage = 1;
+        let currentFormsSearch = '';
+        const pageSize = 10;
+        
+        // 切换标签页
+        function switchTab(tabName) {
+            // 移除所有active类
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            // 添加active类到当前标签
+            event.target.classList.add('active');
+            document.getElementById(tabName + '-tab').classList.add('active');
+            
+            // 如果切换到同步标签页，加载表单列表
+            if (tabName === 'sync') {
+                loadForms(1);
+            }
+        }
+        
+        // 执行搜索
+        function performSearch(page = 0) {
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) {
+                alert('请输入搜索关键词');
+                return;
+            }
+            
+            currentQuery = query;
+            currentPage = page;
+            
+            const resultsDiv = document.getElementById('searchResults');
+            resultsDiv.innerHTML = '<div class="loading">搜索中...</div>';
+            
+            fetch('/api/search/search', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    query: query,
+                    size: pageSize,
+                    from: page * pageSize
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    displayResults(data.data);
+                } else {
+                    resultsDiv.innerHTML = `<div class="error">搜索失败: ${data.message}</div>`;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                resultsDiv.innerHTML = `<div class="error">搜索请求失败: ${error.message}</div>`;
+            });
+        }
+        
+        // 显示搜索结果
+        function displayResults(data) {
+            const resultsDiv = document.getElementById('searchResults');
+            const paginationDiv = document.getElementById('pagination');
+            
+            if (data.hits.length === 0) {
+                resultsDiv.innerHTML = '<div class="loading">没有找到相关结果</div>';
+                paginationDiv.innerHTML = '';
+                return;
+            }
+            
+            let html = `<h4>搜索结果 (共 ${data.total} 条)</h4>`;
+            
+            data.hits.forEach(hit => {
+                html += `
+                    <div class="result-item">
+                        <div class="result-header">
+                            <div class="result-title">${hit.form_name}</div>
+                            <div class="result-score">匹配度: ${hit.score.toFixed(2)}</div>
+                        </div>
+                        <div class="result-meta">
+                            表单ID: ${hit.form_id} | 表名: ${hit.table_name} | 记录ID: ${hit.record_id}
+                        </div>
+                        <div class="result-content">
+                            ${formatRecordData(hit.data, hit.highlight)}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            resultsDiv.innerHTML = html;
+            
+            // 显示分页
+            displayPagination(data.total);
+        }
+        
+        // 格式化记录数据
+        function formatRecordData(data, highlight) {
+            let html = '<table style="width: 100%; border-collapse: collapse;">';
+            
+            // 过滤掉系统字段
+            const systemFields = ['form_id', 'table_name', 'record_id', 'sync_time'];
+            
+            for (const [key, value] of Object.entries(data)) {
+                if (systemFields.includes(key) || !value) continue;
+                
+                let displayValue = value;
+                
+                // 检查是否有高亮
+                if (highlight && highlight[key]) {
+                    displayValue = highlight[key][0];
+                }
+                
+                html += `
+                    <tr style="border-bottom: 1px solid #eee;">
+                        <td style="padding: 5px; font-weight: bold; width: 150px;">${key}:</td>
+                        <td style="padding: 5px;">${displayValue}</td>
+                    </tr>
+                `;
+            }
+            
+            html += '</table>';
+            return html;
+        }
+        
+        // 显示分页
+        function displayPagination(total) {
+            const paginationDiv = document.getElementById('pagination');
+            const totalPages = Math.ceil(total / pageSize);
+            
+            if (totalPages <= 1) {
+                paginationDiv.innerHTML = '';
+                return;
+            }
+            
+            let html = '';
+            
+            // 上一页
+            if (currentPage > 0) {
+                html += `<button class="page-btn" onclick="performSearch(${currentPage - 1})">上一页</button>`;
+            }
+            
+            // 页码
+            const startPage = Math.max(0, currentPage - 2);
+            const endPage = Math.min(totalPages - 1, currentPage + 2);
+            
+            for (let i = startPage; i <= endPage; i++) {
+                html += `<button class="page-btn ${i === currentPage ? 'active' : ''}" onclick="performSearch(${i})">${i + 1}</button>`;
+            }
+            
+            // 下一页
+            if (currentPage < totalPages - 1) {
+                html += `<button class="page-btn" onclick="performSearch(${currentPage + 1})">下一页</button>`;
+            }
+            
+            paginationDiv.innerHTML = html;
+        }
+        
+        // 加载表单列表
+        function loadForms(page = 1, search = '') {
+            currentFormsPage = page;
+            currentFormsSearch = search;
+            
+            const formsDiv = document.getElementById('formsList');
+            formsDiv.innerHTML = '<div class="loading">加载中...</div>';
+            
+            const params = new URLSearchParams({
+                page: page,
+                page_size: 10
+            });
+            
+            if (search) {
+                params.append('search', search);
+            }
+            
+            fetch(`/api/sync/forms?${params}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    displayForms(data.data, data.pagination);
+                } else {
+                    formsDiv.innerHTML = `<div class="error">加载失败: ${data.message}</div>`;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                formsDiv.innerHTML = `<div class="error">加载请求失败: ${error.message}</div>`;
+            });
+        }
+        
+        // 搜索表单
+        function searchForms() {
+            const search = document.getElementById('formSearchInput').value.trim();
+            loadForms(1, search);
+        }
+        
+        // 显示表单列表
+        function displayForms(forms, pagination) {
+            const formsDiv = document.getElementById('formsList');
+            
+            if (forms.length === 0) {
+                formsDiv.innerHTML = '<div class="loading">没有找到表单</div>';
+                displayFormsPagination(null);
+                return;
+            }
+            
+            let html = '';
+            if (pagination) {
+                html += `<div style="margin-bottom: 15px; color: #666;">
+                    显示第 ${pagination.page} 页，共 ${pagination.total_pages} 页，总计 ${pagination.total} 个表单
+                </div>`;
+            }
+            
+            forms.forEach(form => {
+                // 确保表单ID作为字符串处理，避免JavaScript大数精度丢失
+                const formIdStr = String(form.id);
+                html += `
+                    <div class="form-item">
+                        <div class="form-info">
+                            <h4>${form.name}</h4>
+                            <div class="form-meta">ID: ${formIdStr}</div>
+                        </div>
+                        <div class="form-actions">
+                            <button class="btn-small btn-primary" onclick="syncForm('${formIdStr}', false)">增量同步</button>
+                            <button class="btn-small btn-success" onclick="syncForm('${formIdStr}', true)">全量同步</button>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            formsDiv.innerHTML = html;
+            displayFormsPagination(pagination);
+        }
+        
+        // 显示表单分页
+        function displayFormsPagination(pagination) {
+            const paginationDiv = document.getElementById('formsPagination');
+            
+            if (!pagination || pagination.total_pages <= 1) {
+                paginationDiv.innerHTML = '';
+                return;
+            }
+            
+            let html = '';
+            
+            // 上一页
+            if (pagination.has_prev) {
+                html += `<button class="page-btn" onclick="loadForms(${pagination.page - 1}, '${currentFormsSearch}')">上一页</button>`;
+            }
+            
+            // 页码
+            const startPage = Math.max(1, pagination.page - 2);
+            const endPage = Math.min(pagination.total_pages, pagination.page + 2);
+            
+            for (let i = startPage; i <= endPage; i++) {
+                html += `<button class="page-btn ${i === pagination.page ? 'active' : ''}" onclick="loadForms(${i}, '${currentFormsSearch}')">${i}</button>`;
+            }
+            
+            // 下一页
+            if (pagination.has_next) {
+                html += `<button class="page-btn" onclick="loadForms(${pagination.page + 1}, '${currentFormsSearch}')">下一页</button>`;
+            }
+            
+            paginationDiv.innerHTML = html;
+        }
+        
+        // 同步单个表单
+        function syncForm(formId, fullSync) {
+            const button = event.target;
+            const originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = '同步中...';
+            
+            console.log('同步表单ID:', formId, '类型:', typeof formId, '全量同步:', fullSync);
+            
+            fetch(`/api/sync/sync/${formId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    full_sync: fullSync
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`同步成功: ${data.message}`);
+                } else {
+                    alert(`同步失败: ${data.message}`);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert(`同步请求失败: ${error.message}`);
+            })
+            .finally(() => {
+                button.disabled = false;
+                button.textContent = originalText;
+            });
+        }
+        
+        // 同步所有表单
+        function syncAllForms() {
+            if (!confirm('确定要同步所有表单吗？这可能需要一些时间。')) {
+                return;
+            }
+            
+            const button = event.target;
+            const originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = '同步中...';
+            
+            fetch('/api/sync/sync/all', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    full_sync: true
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    let message = '同步完成:\n';
+                    data.results.forEach(result => {
+                        message += `${result.form_name}: ${result.message}\n`;
+                    });
+                    alert(message);
+                    loadForms(); // 刷新表单列表
+                } else {
+                    alert(`同步失败: ${data.message}`);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert(`同步请求失败: ${error.message}`);
+            })
+            .finally(() => {
+                button.disabled = false;
+                button.textContent = originalText;
+            });
+        }
+        
+        // 页面加载时的处理
+        document.addEventListener('DOMContentLoaded', function() {
+            // 绑定回车键搜索
+            document.getElementById('searchInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    performSearch();
+                }
+            });
+            
+            // 绑定表单搜索回车键
+            document.getElementById('formSearchInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    searchForms();
+                }
+            });
+        });
+    </script>
+</body>
+</html>
