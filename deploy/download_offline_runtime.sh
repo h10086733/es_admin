@@ -72,10 +72,17 @@ case $ARCH_NAME in
         ;;
 esac
 
-cd $RUNTIME_DIR/java
+# 检查Java目录是否存在并且包含Java文件
+if [ -d "$RUNTIME_DIR/java" ] && [ -f "$RUNTIME_DIR/java/$JAVA_FILENAME" ]; then
+    echo "Java运行环境已存在，跳过下载"
+else
+    cd $RUNTIME_DIR/java
+    echo "下载OpenJDK 11 for $ARCH_NAME..."
+    wget -O $JAVA_FILENAME $JAVA_DOWNLOAD_URL
+fi
 
-echo "下载OpenJDK 11 for $ARCH_NAME..."
-wget -O $JAVA_FILENAME $JAVA_DOWNLOAD_URL
+# 确保在正确的目录创建Java安装脚本
+cd $RUNTIME_DIR/java
 
 # 创建通用Java安装脚本
 cat > install_java.sh << EOF
