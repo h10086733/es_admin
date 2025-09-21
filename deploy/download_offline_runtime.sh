@@ -102,20 +102,20 @@ else
     exit 1
 fi
 
-# 方法1：使用系统包管理器（如果可用）
-echo "尝试使用系统包管理器安装Java..."
-case \$OS in
-    "centos"|"rhel"|"fedora")
-        if command -v yum &> /dev/null; then
-            yum install -y java-11-openjdk java-11-openjdk-devel && exit 0
-        elif command -v dnf &> /dev/null; then
-            dnf install -y java-11-openjdk java-11-openjdk-devel && exit 0
-        fi
-        ;;
-    "ubuntu"|"debian")
-        apt update && apt install -y openjdk-11-jdk && exit 0
-        ;;
-esac
+# 方法1：使用系统包管理器（如果可用） - 已禁用网络安装
+# echo "尝试使用系统包管理器安装Java..."
+# case \$OS in
+#     "centos"|"rhel"|"fedora")
+#         if command -v yum &> /dev/null; then
+#             yum install -y java-11-openjdk java-11-openjdk-devel && exit 0
+#         elif command -v dnf &> /dev/null; then
+#             dnf install -y java-11-openjdk java-11-openjdk-devel && exit 0
+#         fi
+#         ;;
+#     "ubuntu"|"debian")
+#         apt update && apt install -y openjdk-11-jdk && exit 0
+#         ;;
+# esac
 
 # 方法2：使用下载的压缩包
 if [ -f "\$JAVA_FILENAME" ]; then
@@ -178,28 +178,28 @@ else
     exit 1
 fi
 
-# 方法1：使用系统包管理器（如果可用）
-echo "尝试使用系统包管理器安装Python..."
-case \$OS in
-    "centos"|"rhel"|"fedora")
-        if command -v yum &> /dev/null; then
-            # 安装EPEL仓库
-            yum install -y epel-release
-            yum install -y python38 python38-pip python38-devel && \
-            ln -sf /usr/bin/python3.8 /usr/bin/python3 && \
-            ln -sf /usr/bin/pip3.8 /usr/bin/pip3 && exit 0
-        elif command -v dnf &> /dev/null; then
-            dnf install -y python38 python38-pip python38-devel && \
-            ln -sf /usr/bin/python3.8 /usr/bin/python3 && \
-            ln -sf /usr/bin/pip3.8 /usr/bin/pip3 && exit 0
-        fi
-        ;;
-    "ubuntu"|"debian")
-        apt update && apt install -y python3.8 python3.8-pip python3.8-dev python3.8-venv && \
-        ln -sf /usr/bin/python3.8 /usr/bin/python3 && \
-        ln -sf /usr/bin/pip3.8 /usr/bin/pip3 && exit 0
-        ;;
-esac
+# 方法1：使用系统包管理器（如果可用） - 已禁用网络安装
+# echo "尝试使用系统包管理器安装Python..."
+# case \$OS in
+#     "centos"|"rhel"|"fedora")
+#         if command -v yum &> /dev/null; then
+#             # 安装EPEL仓库
+#             yum install -y epel-release
+#             yum install -y python38 python38-pip python38-devel && \
+#             ln -sf /usr/bin/python3.8 /usr/bin/python3 && \
+#             ln -sf /usr/bin/pip3.8 /usr/bin/pip3 && exit 0
+#         elif command -v dnf &> /dev/null; then
+#             dnf install -y python38 python38-pip python38-devel && \
+#             ln -sf /usr/bin/python3.8 /usr/bin/python3 && \
+#             ln -sf /usr/bin/pip3.8 /usr/bin/pip3 && exit 0
+#         fi
+#         ;;
+#     "ubuntu"|"debian")
+#         apt update && apt install -y python3.8 python3.8-pip python3.8-dev python3.8-venv && \
+#         ln -sf /usr/bin/python3.8 /usr/bin/python3 && \
+#         ln -sf /usr/bin/pip3.8 /usr/bin/pip3 && exit 0
+#         ;;
+# esac
 
 # 方法2：源码编译安装
 if [ -f "Python-\${PYTHON_VERSION}.tgz" ]; then
