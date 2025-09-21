@@ -128,3 +128,4 @@ def get_record_detail(form_id, record_id):
             "success": False,
             "message": str(e)
         }), 500
+

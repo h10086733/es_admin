@@ -1,0 +1,81 @@
+# JVM配置文件 - 用于Elasticsearch内网部署
+
+# Xms表示初始堆大小，Xmx表示最大堆大小
+# 建议设置相同的值，避免堆内存动态调整的开销
+# 堆内存建议设置为物理内存的50%，但不超过32GB
+
+# 4GB内存服务器配置 (推荐)
+-Xms2g
+-Xmx2g
+
+# 8GB内存服务器配置
+# -Xms4g
+# -Xmx4g
+
+# 16GB内存服务器配置  
+# -Xms8g
+# -Xmx8g
+
+# ================================= GC 配置 ==================================
+
+# 使用G1垃圾收集器（推荐用于Elasticsearch）
+-XX:+UseG1GC
+
+# GC日志配置
+-XX:+PrintGCDetails
+-XX:+PrintGCTimeStamps
+-XX:+PrintGCDateStamps
+-XX:+PrintClassHistogram
+-XX:+PrintTenuringDistribution
+-XX:+PrintGCApplicationStoppedTime
+-Xloggc:logs/gc.log
+-XX:+UseGCLogFileRotation
+-XX:NumberOfGCLogFiles=32
+-XX:GCLogFileSize=64m
+
+# G1GC 优化参数
+-XX:G1HeapRegionSize=16m
+-XX:+UnlockExperimentalVMOptions
+-XX:G1NewSizePercent=30
+-XX:G1MaxNewSizePercent=40
+-XX:+UseLargePages
+-XX:+AggressiveOpts
+
+# ================================= 内存配置 ==================================
+
+# 禁用swap
+-Djava.awt.headless=true
+
+# 确保内存映射区域足够大
+-XX:MaxDirectMemorySize=1g
+
+# 设置临时目录
+-Djava.io.tmpdir=/tmp
+
+# ================================= 网络配置 ==================================
+
+# 网络相关优化
+-Djava.net.preferIPv4Stack=true
+
+# ================================= 调试配置 ==================================
+
+# 开启OOM时dump堆内存（用于问题排查）
+-XX:+HeapDumpOnOutOfMemoryError
+-XX:HeapDumpPath=logs/
+
+# JVM崩溃时生成错误日志
+-XX:ErrorFile=logs/hs_err_pid%p.log
+
+# ================================= 其他优化 ==================================
+
+# 预分配内存，减少内存碎片
+-XX:+AlwaysPreTouch
+
+# 禁用偏向锁（在某些情况下可以提高性能）
+-XX:-UseBiasedLocking
+
+# 启用压缩指针（64位JVM的内存优化）
+-XX:+UseCompressedOops
+
+# 字符串去重（Java 8u20+）
+-XX:+UseStringDeduplication

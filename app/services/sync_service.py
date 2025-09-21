@@ -28,8 +28,7 @@ class SyncService:
             if field_type in ['text', 'VARCHAR']:
                 properties[field_name] = {
                     "type": "text",
-                    "analyzer": "ik_max_word",
-                    "search_analyzer": "ik_smart"
+                    "analyzer": "standard"
                 }
             elif field_type in ['datetime', 'TIMESTAMP', 'date', 'DATE']:
                 properties[field_name] = {"type": "date"}
@@ -47,10 +46,7 @@ class SyncService:
             "settings": {
                 "analysis": {
                     "analyzer": {
-                        "ik_max_word": {
-                            "type": "standard"
-                        },
-                        "ik_smart": {
+                        "default": {
                             "type": "standard"
                         }
                     }
@@ -72,7 +68,7 @@ class SyncService:
             return False
     
     def sync_form_data(self, form_id, full_sync=True):
-        """同步表单数据到ES (优化版，支持大数据集)"""
+        """同步表单数据到ES (优化版，支持大数据集和附表)"""
         import time
         start_time = time.time()
         
@@ -86,28 +82,36 @@ class SyncService:
             return {"success": False, "message": "无法获取表名"}
         
         fields = FormModel.get_form_fields(form_id)
+        sub_tables = FormModel.get_valid_form_sub_tables(form_id)
         
         # 获取字段标签映射用于数据转换
         field_labels = FormModel.get_field_labels(form_id)
         
-        # 创建索引映射
-        if not self.create_index_mapping(form_id, fields):
+        # 创建索引映射（包含主表和附表字段）
+        all_fields = fields.copy()
+        for sub_table in sub_tables:
+            all_fields.extend(sub_table['fields'])
+        
+        if not self.create_index_mapping(form_id, all_fields):
             return {"success": False, "message": "创建索引失败"}
         
         # 使用分批迭代器处理大数据集
         modify_date_after = None if full_sync else FormModel.get_last_sync_time(form_id)
         
+        # 预加载成员信息到缓存
+        member_cache = self.preload_member_cache(table_name, modify_date_after)
+        
         index_name = f"form_{form_id}"
         success_count = 0
         total_count = 0
-        batch_size = 1000  # ES bulk操作批次大小
+        batch_size = 2000  # ES bulk操作批次大小，适中的批次确保稳定性
         
         print(f"开始同步表单 {form_id} ({form['name']}) 数据...")
         
-        # 使用分批迭代器，每次从数据库读取5000条记录
+        # 使用分批迭代器，每次从数据库读取1000条记录
         for db_batch in FormModel.get_table_data_iterator(
             table_name, 
-            batch_size=5000,  # 数据库批次大小
+            batch_size=1000,  # 数据库批次大小，限制为1000条保护数据库
             modify_date_after=modify_date_after
         ):
             if not db_batch:
@@ -129,7 +133,7 @@ class SyncService:
                         "sync_time": datetime.now().isoformat()
                     }
                     
-                    # 添加所有字段数据，并转换字段名为中文标签
+                    # 添加主表字段数据，并转换字段名为中文标签
                     for key, value in record.items():
                         if value is not None:
                             # 转换字段名为中文标签
@@ -139,10 +143,37 @@ class SyncService:
                             if self.should_skip_field(key):
                                 continue
                             
-                            # 格式化值
-                            formatted_value = self.format_field_value(key, value)
+                            # 格式化值（使用缓存）
+                            formatted_value = self.format_field_value_cached(key, value, member_cache)
                             if formatted_value is not None:
                                 doc[display_name] = formatted_value
+                    
+                    # 添加附表数据
+                    for sub_table in sub_tables:
+                        sub_table_data = self.get_sub_table_data(
+                            sub_table['table_name'], 
+                            record.get('ID', record.get('id')),
+                            sub_table,
+                            member_cache
+                        )
+                        if sub_table_data:
+                            # 将附表数据添加到文档中，使用附表显示名作为前缀
+                            sub_table_prefix = sub_table['display_name']
+                            for sub_record in sub_table_data:
+                                for key, value in sub_record.items():
+                                    if value is not None and not self.should_skip_field(key):
+                                        sub_field_labels = FormModel.get_sub_table_field_labels(form_id, sub_table['front_table_name'])
+                                        display_name = self.get_field_display_name(key, sub_field_labels)
+                                        formatted_value = self.format_field_value_cached(key, value, member_cache)
+                                        if formatted_value is not None:
+                                            # 使用附表前缀避免字段名冲突
+                                            prefixed_name = f"{sub_table_prefix}_{display_name}"
+                                            if prefixed_name not in doc:
+                                                doc[prefixed_name] = []
+                                            if isinstance(doc[prefixed_name], list):
+                                                doc[prefixed_name].append(formatted_value)
+                                            else:
+                                                doc[prefixed_name] = [doc[prefixed_name], formatted_value]
                     
                     # 添加到bulk操作
                     bulk_body.extend([
@@ -185,15 +216,40 @@ class SyncService:
             "rate": rate
         }
     
-    def sync_all_forms(self, full_sync=True):
+    def sync_all_forms(self, full_sync=True, sync_members_first=True):
         """同步所有表单数据"""
-        forms = FormModel.get_all_forms()
         results = []
         
+        # 优先同步人员数据，确保成员字段能正确显示
+        if sync_members_first:
+            try:
+                from app.services.member_sync_service import MemberSyncService
+                member_service = MemberSyncService()
+                member_result = member_service.sync_members_to_es(full_sync)
+                results.append({
+                    "form_name": "系统人员",
+                    "form_id": "system_members",
+                    "type": "member_sync",
+                    **member_result
+                })
+                print("人员数据同步完成，开始同步表单数据...")
+            except Exception as e:
+                print(f"人员数据同步失败，继续同步表单数据: {e}")
+                results.append({
+                    "form_name": "系统人员",
+                    "form_id": "system_members", 
+                    "type": "member_sync",
+                    "success": False,
+                    "message": f"人员同步失败: {str(e)}"
+                })
+        
+        # 同步表单数据
+        forms = FormModel.get_all_forms()
         for form in forms:
             result = self.sync_form_data(form['id'], full_sync)
             result['form_name'] = form['name']
             result['form_id'] = form['id']
+            result['type'] = 'form_sync'
             results.append(result)
         
         return results
@@ -393,6 +449,83 @@ class SyncService:
         }
         return field_name in hidden_fields
     
+    def preload_member_cache(self, table_name, modify_date_after=None):
+        """预加载成员信息到缓存（优先从ES获取，降级到数据库）"""
+        print("正在预加载成员信息...")
+        
+        try:
+            # 收集所有成员ID
+            member_ids = set()
+            
+            for batch in FormModel.get_table_data_iterator(table_name, batch_size=1000, modify_date_after=modify_date_after):
+                if not batch:
+                    break
+                
+                for record in batch:
+                    for key, value in record.items():
+                        if (key.endswith('_member_id') or key.endswith('member_id')) and value and value != 0:
+                            member_ids.add(value)
+            
+            # 批量查询成员信息
+            if member_ids:
+                # 优先尝试从ES获取成员信息（更快）
+                try:
+                    from app.services.member_sync_service import MemberSyncService
+                    member_service = MemberSyncService()
+                    member_cache = member_service.get_member_cache_from_es(list(member_ids))
+                    
+                    # 检查ES中缺失的成员ID，从数据库补充
+                    missing_ids = [mid for mid in member_ids if mid not in member_cache]
+                    if missing_ids:
+                        print(f"ES中缺失 {len(missing_ids)} 个成员信息，从数据库补充...")
+                        db_member_cache = FormModel.get_members_batch(missing_ids)
+                        member_cache.update(db_member_cache)
+                    
+                    print(f"成功预加载 {len(member_cache)} 个成员信息 (ES: {len(member_cache)-len(missing_ids)}, DB: {len(missing_ids) if missing_ids else 0})")
+                    return member_cache
+                    
+                except Exception as es_error:
+                    print(f"从ES获取成员信息失败，降级到数据库查询: {es_error}")
+                    # 降级到数据库查询
+                    member_cache = FormModel.get_members_batch(list(member_ids))
+                    print(f"从数据库成功预加载 {len(member_cache)} 个成员信息")
+                    return member_cache
+            else:
+                print("未发现成员字段，跳过成员信息预加载")
+                return {}
+                
+        except Exception as e:
+            print(f"预加载成员信息失败: {e}")
+            return {}
+    
+    def format_field_value_cached(self, field_name, value, member_cache):
+        """格式化字段值（使用缓存）"""
+        # 跳过空值
+        if value is None or value == '':
+            return None
+            
+        # 处理日期时间字段
+        if isinstance(value, datetime):
+            return value.isoformat()
+        
+        # 处理成员字段，使用缓存
+        if field_name.endswith('_member_id') or field_name.endswith('member_id'):
+            # 使用字符串键查找，避免大整数精度问题
+            member_name = member_cache.get(str(value))
+            return member_name if member_name else str(value)
+        
+        # 格式化日期字段显示
+        if field_name in ['start_date', 'modify_date'] and isinstance(value, str):
+            try:
+                if 'T' in value:
+                    date_part = value.split('T')[0]
+                    time_part = value.split('T')[1].split('.')[0] if '.' in value.split('T')[1] else value.split('T')[1]
+                    return f"{date_part} {time_part}"
+            except:
+                pass
+        
+        return str(value)
+    
     def format_field_value(self, field_name, value):
         """格式化字段值"""
         # 跳过空值
@@ -404,7 +537,7 @@ class SyncService:
             return value.isoformat()
         
         # 处理成员字段，转换为姓名
-        if field_name.endswith('_member_id'):
+        if field_name.endswith('_member_id') or field_name.endswith('member_id'):
             try:
                 member_name = FormModel.get_member_name(value)
                 return member_name if member_name else str(value)
@@ -421,4 +554,53 @@ class SyncService:
             except:
                 pass
         
-        return str(value)
+        return str(value)    
+    def get_sub_table_data(self, sub_table_name, main_record_id, sub_table_config, member_cache):
+        """获取附表数据"""
+        try:
+            # 动态确定外键字段名
+            foreign_key_field = self.get_sub_table_foreign_key(sub_table_config)
+            
+            # 查询附表数据，关联主表记录ID
+            sub_data = FormModel.get_table_data_by_foreign_key(
+                sub_table_name, 
+                foreign_key_field,
+                main_record_id,
+                limit=100  # 限制每个主表记录的附表数据数量
+            )
+            return sub_data
+        except Exception as e:
+            print(f"获取附表数据失败 {sub_table_name}: {e}")
+            return []
+    
+    def get_sub_table_foreign_key(self, sub_table_config):
+        """确定附表的外键字段名"""
+        # 1. 优先检查配置中是否有明确的外键字段定义
+        owner_table = sub_table_config.get('owner_table', '')
+        
+        # 2. 根据表单系统的常见约定确定外键字段
+        # 通常附表通过以下字段关联主表：
+        possible_keys = [
+            'main_id',           # 最常见的外键字段
+            'mainid',            # 无下划线版本
+            'parent_id',         # 另一种常见的外键字段
+            'parentid',          # 无下划线版本
+            'form_main_id',      # 带表单前缀的外键
+            'formmain_id',       # 另一种形式
+            f'{owner_table}_id'  # 基于主表名的外键（如果有配置）
+        ]
+        
+        # 3. 通过检查附表字段定义来确定正确的外键
+        sub_table_fields = sub_table_config.get('fields', [])
+        field_names = [field.get('name', field.get('columnName', '')) for field in sub_table_fields]
+        
+        for key in possible_keys:
+            if key in field_names:
+                print(f"附表 {sub_table_config.get('table_name')} 使用外键字段: {key}")
+                return key
+        
+        # 4. 如果都没找到，使用默认值并记录警告
+        default_key = 'main_id'
+        print(f"警告: 附表 {sub_table_config.get('table_name')} 未找到明确的外键字段，使用默认值: {default_key}")
+        print(f"  附表字段列表: {field_names}")
+        return default_key

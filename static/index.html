@@ -296,6 +296,19 @@
                         <button class="search-btn" onclick="searchForms()">搜索</button>
                         <button class="sync-btn" onclick="loadForms(1)" style="margin-left: 10px;">刷新列表</button>
                         <button class="sync-btn" onclick="syncAllForms()" style="margin-left: 10px;">同步所有表单</button>
+                        <button class="sync-btn" onclick="asyncSyncAllForms()" style="margin-left: 10px; background: #28a745;">异步同步所有表单</button>
+                    </div>
+                </div>
+                
+                <!-- 异步同步状态显示 -->
+                <div id="asyncSyncStatus" style="display: none; margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 4px; border-left: 4px solid #007bff;">
+                    <h4 style="margin: 0 0 10px 0;">异步同步进度</h4>
+                    <div id="asyncSyncProgress">
+                        <div style="background: #e9ecef; border-radius: 4px; height: 20px; margin: 10px 0;">
+                            <div id="progressBar" style="background: #007bff; height: 100%; border-radius: 4px; width: 0%; transition: width 0.3s;"></div>
+                        </div>
+                        <div id="asyncSyncMessage">准备中...</div>
+                        <div id="asyncSyncDetails" style="font-size: 12px; color: #666; margin-top: 5px;"></div>
                     </div>
                 </div>
                 
@@ -387,9 +400,6 @@
                             <div class="result-title">${hit.form_name}</div>
                             <div class="result-score">匹配度: ${hit.score.toFixed(2)}</div>
                         </div>
-                        <div class="result-meta">
-                            表名: ${hit.table_name}
-                        </div>
                         <div class="result-content">
                             ${formatRecordData(hit.data, hit.highlight)}
                         </div>
@@ -407,7 +417,7 @@
         function formatRecordData(data, highlight) {
             let html = '<table style="width: 100%; border-collapse: collapse;">';
             
-            // 后端已经处理了字段翻译和系统字段过滤，直接显示即可
+            // 后端已经处理了字段翻译和系统字段过滤，显示所有字段
             for (const [key, value] of Object.entries(data)) {
                 if (!value) continue;
                 
@@ -650,6 +660,121 @@
             });
         }
         
+        // 异步同步所有表单
+        function asyncSyncAllForms() {
+            if (!confirm('确定要异步同步所有表单吗？')) {
+                return;
+            }
+            
+            const button = event.target;
+            const originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = '启动中...';
+            
+            fetch('/api/sync/async/sync/all', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    full_sync: true
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // 显示异步同步状态面板
+                    document.getElementById('asyncSyncStatus').style.display = 'block';
+                    
+                    // 开始轮询任务状态
+                    pollAsyncSyncStatus(data.task_id);
+                    
+                    alert('异步同步任务已启动，请查看下方进度');
+                } else {
+                    alert('启动异步同步失败: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('启动异步同步请求失败: ' + error.message);
+            })
+            .finally(() => {
+                button.disabled = false;
+                button.textContent = originalText;
+            });
+        }
+        
+        // 轮询异步同步状态
+        function pollAsyncSyncStatus(taskId) {
+            const pollInterval = setInterval(() => {
+                fetch('/api/sync/async/status/' + taskId)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updateAsyncSyncUI(data.data);
+                        
+                        // 如果任务完成或失败，停止轮询
+                        if (data.data.status === 'completed' || data.data.status === 'failed') {
+                            clearInterval(pollInterval);
+                            
+                            // 3秒后隐藏状态面板
+                            setTimeout(() => {
+                                document.getElementById('asyncSyncStatus').style.display = 'none';
+                            }, 3000);
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('轮询状态失败:', error);
+                    clearInterval(pollInterval);
+                });
+            }, 1000); // 每秒轮询一次
+        }
+        
+        // 更新异步同步UI
+        function updateAsyncSyncUI(status) {
+            const progressBar = document.getElementById('progressBar');
+            const messageDiv = document.getElementById('asyncSyncMessage');
+            const detailsDiv = document.getElementById('asyncSyncDetails');
+            
+            // 更新进度条
+            if (status.progress !== undefined) {
+                progressBar.style.width = status.progress + '%';
+            }
+            
+            // 更新状态消息
+            if (status.message) {
+                messageDiv.textContent = status.message;
+            }
+            
+            // 更新详细信息
+            let details = '';
+            if (status.status === 'running') {
+                if (status.current_form) {
+                    details += '当前表单: ' + status.current_form + ' ';
+                }
+                if (status.completed_forms !== undefined && status.total_forms !== undefined) {
+                    details += '(' + status.completed_forms + '/' + status.total_forms + ')';
+                }
+            } else if (status.status === 'completed') {
+                if (status.success_count !== undefined && status.total_forms !== undefined) {
+                    details += '成功: ' + status.success_count + '/' + status.total_forms + ' ';
+                }
+                if (status.elapsed_time !== undefined) {
+                    details += '耗时: ' + status.elapsed_time.toFixed(1) + '秒';
+                }
+                progressBar.style.backgroundColor = '#28a745';
+            } else if (status.status === 'failed') {
+                details = '任务失败';
+                if (status.error) {
+                    details += ': ' + status.error;
+                }
+                progressBar.style.backgroundColor = '#dc3545';
+            }
+            
+            detailsDiv.textContent = details;
+        }
+        
         // 页面加载时的处理
         document.addEventListener('DOMContentLoaded', function() {
             // 绑定回车键搜索
@@ -665,6 +790,7 @@
                     searchForms();
                 }
             });
+            
         });
     </script>
 </body>
