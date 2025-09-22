@@ -1,5 +1,0 @@
-flask
-flask-cors
-python-dotenv
-elasticsearch==7.17.0
-schedule

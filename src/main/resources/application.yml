@@ -1,0 +1,95 @@
+server:
+  port: ${SERVER_PORT:5000}
+  servlet:
+    context-path: /
+  # 增加超时配置
+  tomcat:
+    connection-timeout: 600000  # 10分钟
+  async:
+    request-timeout: 600000  # 10分钟
+
+spring:
+  application:
+    name: es-admin
+  
+  # Web MVC配置 - 增加异步请求超时
+  mvc:
+    async:
+      request-timeout: 600000  # 10分钟
+  
+  # 达梦数据库配置
+  datasource:
+    url: jdbc:dm://${DM_HOST:localhost}:${DM_PORT:5236}
+    username: ${DM_USER:SYSDBA}
+    password: ${DM_PASSWORD:SYSDBA}
+    driver-class-name: dm.jdbc.driver.DmDriver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 0
+      idle-timeout: 300000
+      connection-timeout: 30000
+      validation-timeout: 5000
+      leak-detection-threshold: 0
+      max-lifetime: 900000
+      initialization-fail-timeout: -1
+      test-while-idle: false
+      test-on-borrow: false
+      test-on-return: false
+      
+  # JPA配置
+  jpa:
+    database: MYSQL  # 使用通用配置
+    show-sql: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL57Dialect
+        format_sql: true
+        hbm2ddl:
+          auto: none
+        temp:
+          use_jdbc_metadata_defaults: false
+
+  # 静态资源配置
+  web:
+    resources:
+      static-locations: classpath:/static/
+  
+  # Thymeleaf配置
+  thymeleaf:
+    prefix: classpath:/templates/
+    suffix: .html
+    cache: false
+    encoding: UTF-8
+
+# Elasticsearch配置
+elasticsearch:
+  host: ${ES_HOST:localhost:9200}
+  username: ${ES_USER:elastic}
+  password: ${ES_PASSWORD:changeme}
+  timeout: 30
+  verify-certs: false
+
+# 应用配置
+app:
+  sync:
+    batch-size: 2000
+    db-batch-size: 1000
+    thread-pool-size: 10
+  search:
+    page-size: 10
+    max-size: 100
+    timeout: 30
+
+# 日志配置
+logging:
+  level:
+    com.esadmin: DEBUG
+    org.elasticsearch: WARN
+    org.springframework: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/es-admin.log

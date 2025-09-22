@@ -75,6 +75,15 @@ wheels/
 .installed.cfg
 *.egg
 
+# Java/Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+
 # OS generated files
 .DS_Store
 .DS_Store?
