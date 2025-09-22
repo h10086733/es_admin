@@ -289,7 +289,9 @@ public class SyncService {
                 if (fullSync || !hasIncrementalIndexes) {
                     // 全量同步使用基于ID的游标分页（性能更好）
                     log.debug("查询数据库：tableName={}, limit={}, lastProcessedId={}", tableName, dbBatchSize, lastProcessedId);
-                    batch = formService.getTableDataBatchByMinId(tableName, dbBatchSize, 0, lastProcessedId);
+                    // 第一次查询时(lastProcessedId=0)传递null，从头开始；后续查询传递实际的ID作为游标
+                    Long minIdForQuery = (lastProcessedId == 0L) ? null : lastProcessedId;
+                    batch = formService.getTableDataBatchByMinId(tableName, dbBatchSize, 0, minIdForQuery);
                 } else {
                     // 增量同步使用新的游标分页方法
                     batch = formService.getTableDataIncrementalCursor(tableName, dbBatchSize, 

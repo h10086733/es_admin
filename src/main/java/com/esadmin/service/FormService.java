@@ -71,17 +71,25 @@ public class FormService {
 
     public String getFormTableName(String formId) {
         FormDto form = getFormById(formId);
-        if (form == null) return null;
+        if (form == null) {
+            log.debug("无法获取表单信息: formId={}", formId);
+            return null;
+        }
 
         try {
             Map<String, Object> fieldInfo = form.getFieldInfo();
+            log.debug("表单 {} 的 fieldInfo keys: {}", formId, fieldInfo != null ? fieldInfo.keySet() : "null");
+            
             if (fieldInfo.containsKey("front_formmain")) {
                 Map<String, Object> frontFormMain = (Map<String, Object>) fieldInfo.get("front_formmain");
-                return (String) frontFormMain.get("tableName");
+                String tableName = (String) frontFormMain.get("tableName");
+                log.debug("从 front_formmain 获取表名: formId={}, tableName={}", formId, tableName);
+                return tableName;
             }
+            log.debug("fieldInfo 中没有 front_formmain 字段: formId={}", formId);
             return null;
         } catch (Exception e) {
-            log.error("提取表名失败", e);
+            log.error("提取表名失败: formId={}", formId, e);
             return null;
         }
     }
@@ -238,12 +246,16 @@ public class FormService {
      * 基于最小ID获取数据批次（用于ES增量同步）
      */
     public List<Map<String, Object>> getTableDataBatchByMinId(String tableName, int limit, int offset, Long minId) {
+        log.debug("getTableDataBatchByMinId调用：tableName={}, limit={}, offset={}, minId={}", tableName, limit, offset, minId);
         StringBuilder sql = new StringBuilder("SELECT * FROM " + tableName);
         List<Object> params = new ArrayList<>();
         
         if (minId != null) {
+            log.debug("minId不为null，添加WHERE条件：minId={}", minId);
             sql.append(" WHERE ID > ?");
             params.add(minId);
+        } else {
+            log.debug("minId为null，跳过WHERE条件");
         }
         
         sql.append(" ORDER BY ID LIMIT ?");
@@ -304,10 +316,23 @@ public class FormService {
 
     public boolean checkTableExists(String tableName) {
         try {
-            jdbcTemplate.queryForObject("SELECT 1 FROM " + tableName + " LIMIT 1", Integer.class);
+            // 方法1：尝试查询表的第一行数据
+            jdbcTemplate.queryForObject("SELECT 1 FROM " + tableName + " WHERE ROWNUM <= 1", Integer.class);
+            log.debug("表 {} 存在验证通过（方法1：数据查询）", tableName);
             return true;
-        } catch (Exception e) {
-            return false;
+        } catch (Exception e1) {
+            log.debug("方法1验证失败: {}", e1.getMessage());
+            try {
+                // 方法2：查询数据字典确认表存在
+                String checkSql = "SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = ?";
+                Integer count = jdbcTemplate.queryForObject(checkSql, Integer.class, tableName.toUpperCase());
+                boolean exists = count != null && count > 0;
+                log.debug("表 {} 存在验证{} （方法2：数据字典查询，count={}）", tableName, exists ? "通过" : "失败", count);
+                return exists;
+            } catch (Exception e2) {
+                log.error("检查表 {} 是否存在时发生错误: 方法1={}, 方法2={}", tableName, e1.getMessage(), e2.getMessage());
+                return false;
+            }
         }
     }
 
