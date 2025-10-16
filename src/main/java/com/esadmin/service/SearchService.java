@@ -1,13 +1,14 @@
 package com.esadmin.service;
 
 import com.esadmin.dto.FormDto;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestHighLevelClient;
+import org.elasticsearch.client.indices.GetIndexRequest;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.MultiMatchQueryBuilder;
@@ -29,12 +30,17 @@ public class SearchService {
     
     private final RestHighLevelClient esClient;
     private final FormService formService;
-    private final ObjectMapper objectMapper;
+    private final FormUrlService formUrlService;
+    private final ExcelImportService excelImportService;
     
-    public SearchService(RestHighLevelClient esClient, FormService formService, ObjectMapper objectMapper) {
+    public SearchService(RestHighLevelClient esClient,
+                         FormService formService,
+                         FormUrlService formUrlService,
+                         ExcelImportService excelImportService) {
         this.esClient = esClient;
         this.formService = formService;
-        this.objectMapper = objectMapper;
+        this.formUrlService = formUrlService;
+        this.excelImportService = excelImportService;
     }
 
     @Value("${app.search.max-size:100}")
@@ -78,20 +84,16 @@ public class SearchService {
         try {
             if (formIds != null && !formIds.isEmpty()) {
                 return formIds.stream()
-                    .map(id -> "form_" + id)
-                    .toArray(String[]::new);
+                        .map(id -> "form_" + id)
+                        .toArray(String[]::new);
             }
 
-            // 获取所有form索引
-            org.elasticsearch.client.indices.GetIndexRequest getIndexRequest = 
-                new org.elasticsearch.client.indices.GetIndexRequest("form_*");
-            
-            String[] allIndices = esClient.indices()
-                .get(getIndexRequest, RequestOptions.DEFAULT)
-                .getIndices();
-            
-            return allIndices;
-            
+            Set<String> indices = new LinkedHashSet<>();
+            indices.addAll(fetchIndices("form_*"));
+            indices.addAll(fetchIndices("excel_*"));
+
+            return indices.toArray(new String[0]);
+
         } catch (Exception e) {
             log.error("获取索引列表失败", e);
             return new String[0];
@@ -155,46 +157,61 @@ public class SearchService {
         
         List<com.esadmin.dto.SearchResponse.SearchHit> hits = new ArrayList<>();
         Map<String, String> formCache = new HashMap<>();
+        Map<String, String> excelCache = new HashMap<>();
 
         for (SearchHit hit : response.getHits().getHits()) {
             Map<String, Object> source = hit.getSourceAsMap();
+            String sourceType = StringUtils.defaultIfBlank((String) source.get("source_type"), "form");
+            String tableName = (String) source.get("table_name");
+            String recordId = source.get("record_id") != null ? String.valueOf(source.get("record_id")) : "";
+
             String formId = (String) source.get("form_id");
+            String formName;
+            String jumpUrl = null;
 
-            // 获取表单名称（使用缓存）
-            String formName = formCache.computeIfAbsent(formId, id -> {
-                try {
-                    FormDto form = formService.getFormById(id);
-                    return form != null ? form.getName() : "未知表单";
-                } catch (Exception e) {
-                    log.error("获取表单名称失败", e);
-                    return "未知表单";
-                }
-            });
-
-            // 提取显示数据
-            Map<String, Object> displayData = extractDisplayData(source);
-
-            // 转换高亮
-            Map<String, List<String>> highlight = new HashMap<>();
-            if (hit.getHighlightFields() != null) {
-                hit.getHighlightFields().forEach((key, value) -> {
-                    List<String> fragments = new ArrayList<>();
-                    for (org.elasticsearch.common.text.Text fragment : value.getFragments()) {
-                        fragments.add(fragment.string());
-                    }
-                    highlight.put(key, fragments);
+            if ("excel".equalsIgnoreCase(sourceType)) {
+                String cacheKey = StringUtils.defaultIfBlank(tableName, "excel_dataset");
+                formName = excelCache.computeIfAbsent(cacheKey, key -> {
+                    String display = excelImportService.getDisplayName(key);
+                    return StringUtils.isNotBlank(display) ? display : key;
                 });
+                formId = "excel:" + cacheKey;
+            } else {
+                String cacheKey = StringUtils.defaultIfBlank(formId, "unknown_form");
+                formName = formCache.computeIfAbsent(cacheKey, id -> {
+                    try {
+                        FormDto form = formService.getFormById(id);
+                        return form != null ? form.getName() : "未知表单";
+                    } catch (Exception e) {
+                        log.error("获取表单名称失败", e);
+                        return "未知表单";
+                    }
+                });
+                jumpUrl = formUrlService.generateFormUrl(cacheKey);
+                formId = cacheKey;
             }
 
-            com.esadmin.dto.SearchResponse.SearchHit searchHit = 
-                new com.esadmin.dto.SearchResponse.SearchHit();
+            Map<String, Object> displayData = extractDisplayData(source, sourceType);
+            Map<String, List<String>> highlight = extractHighlight(hit);
+
+            if ("excel".equalsIgnoreCase(sourceType)) {
+                Object sheetName = source.get("sheet_name");
+                if (sheetName != null && StringUtils.isNotBlank(sheetName.toString())) {
+                    displayData.putIfAbsent("工作表", sheetName);
+                }
+                displayData.putIfAbsent("Excel名称", formName);
+            }
+
+            com.esadmin.dto.SearchResponse.SearchHit searchHit = new com.esadmin.dto.SearchResponse.SearchHit();
             searchHit.setScore(hit.getScore());
             searchHit.setFormId(formId);
-            searchHit.setFormName(formName);
-            searchHit.setTableName((String) source.get("table_name"));
-            searchHit.setRecordId(String.valueOf(source.get("record_id")));
+            searchHit.setFormName("excel".equalsIgnoreCase(sourceType) ? formName + " (Excel)" : formName);
+            searchHit.setTableName(tableName);
+            searchHit.setRecordId(recordId);
             searchHit.setData(displayData);
             searchHit.setHighlight(highlight);
+            searchHit.setJumpUrl(jumpUrl);
+            searchHit.setSourceType(sourceType);
 
             hits.add(searchHit);
         }
@@ -208,26 +225,82 @@ public class SearchService {
         return result;
     }
 
-    private Map<String, Object> extractDisplayData(Map<String, Object> source) {
-        // 定义系统字段，不在搜索结果中显示
-        Set<String> systemFields = Set.of(
-            "form_id", "table_name", "record_id", "sync_time"
-        );
+    private Map<String, Object> extractDisplayData(Map<String, Object> source, String sourceType) {
+        Set<String> systemFields = new HashSet<>(Arrays.asList(
+                "form_id", "table_name", "record_id", "sync_time", "source_type", "excel_name", "sheet_name", "column_labels"
+        ));
 
-        Map<String, Object> displayData = new HashMap<>();
+        Map<String, Object> displayData = new LinkedHashMap<>();
+        Map<String, String> labelMap = Collections.emptyMap();
+        if ("excel".equalsIgnoreCase(sourceType)) {
+            Object labelsObj = source.get("column_labels");
+            if (labelsObj instanceof Map) {
+                Map<String, String> mapped = new LinkedHashMap<>();
+                ((Map<?, ?>) labelsObj).forEach((k, v) -> {
+                    if (k != null && v != null) {
+                        mapped.put(k.toString(), v.toString());
+                    }
+                });
+                labelMap = mapped;
+            }
+        }
         for (Map.Entry<String, Object> entry : source.entrySet()) {
             String key = entry.getKey();
             Object value = entry.getValue();
 
-            // 跳过系统字段和空值
-            if (systemFields.contains(key) || value == null || "".equals(value)) {
+            if (value == null) {
+                continue;
+            }
+            if (systemFields.contains(key) || key.startsWith("_primary_")) {
+                continue;
+            }
+            if (value instanceof String && StringUtils.isBlank((String) value)) {
                 continue;
             }
 
-            displayData.put(key, value);
+            if ("column_labels".equals(key)) {
+                continue;
+            }
+
+            String displayKey = key;
+            if (!labelMap.isEmpty() && labelMap.containsKey(key)) {
+                String mappedKey = labelMap.get(key);
+                if (StringUtils.isNotBlank(mappedKey)) {
+                    displayKey = mappedKey;
+                    if (displayData.containsKey(displayKey) && Objects.equals(displayData.get(displayKey), value)) {
+                        continue;
+                    }
+                }
+            }
+
+            displayData.put(displayKey, value);
         }
 
         return displayData;
+    }
+
+    private Map<String, List<String>> extractHighlight(SearchHit hit) {
+        Map<String, List<String>> highlight = new HashMap<>();
+        if (hit.getHighlightFields() != null) {
+            hit.getHighlightFields().forEach((key, value) -> {
+                List<String> fragments = new ArrayList<>();
+                for (org.elasticsearch.common.text.Text fragment : value.getFragments()) {
+                    fragments.add(fragment.string());
+                }
+                highlight.put(key, fragments);
+            });
+        }
+        return highlight;
+    }
+
+    private List<String> fetchIndices(String pattern) {
+        try {
+            String[] indices = esClient.indices().get(new GetIndexRequest(pattern), RequestOptions.DEFAULT).getIndices();
+            return Arrays.asList(indices);
+        } catch (Exception e) {
+            log.debug("索引匹配为空: pattern={}, error={}", pattern, e.getMessage());
+            return Collections.emptyList();
+        }
     }
 
     private com.esadmin.dto.SearchResponse createEmptyResponse() {

@@ -138,6 +138,9 @@
             font-size: 12px;
             color: #666;
             margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         
         .result-content {
@@ -258,6 +261,31 @@
             color: white;
             border-color: #007bff;
         }
+        
+        .jump-link {
+            color: #007bff;
+            text-decoration: none;
+            margin-left: 10px;
+            font-size: 16px;
+        }
+        
+        .jump-link:hover {
+            color: #0056b3;
+        }
+        
+        .jump-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+        
+        .jump-btn:hover {
+            background: #0056b3;
+        }
     </style>
 </head>
 <body>
@@ -268,8 +296,9 @@
         </div>
         
         <div class="tabs">
-            <div class="tab active" onclick="switchTab('search')">数据搜索</div>
-            <div class="tab" onclick="switchTab('sync')">数据同步</div>
+            <div class="tab active" onclick="switchTab(event, 'search')">数据搜索</div>
+            <div class="tab" onclick="switchTab(event, 'sync')">数据同步</div>
+            <div class="tab" onclick="switchTab(event, 'excel')">Excel导入</div>
         </div>
         
         <!-- 搜索标签页 -->
@@ -316,6 +345,28 @@
                 <div id="formsPagination" class="pagination"></div>
             </div>
         </div>
+
+        <!-- Excel 导入标签页 -->
+        <div id="excel-tab" class="tab-content">
+            <div class="sync-section">
+                <h3>Excel 数据导入</h3>
+                <div class="search-box" style="flex-wrap: wrap; align-items: center;">
+                    <input type="file" id="excelFileInput" accept=".xls,.xlsx" style="flex: 1 1 280px; background: #fff; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                    <input type="text" id="excelNameInput" class="search-input" placeholder="自定义数据集名称（可选）">
+                </div>
+                <div class="search-box" style="flex-wrap: wrap; align-items: center;">
+                    <input type="text" id="excelSheetInput" class="search-input" placeholder="工作表名称（默认为第一个工作表）">
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 14px; color: #555;">
+                        <input type="checkbox" id="excelCoverCheckbox" checked>
+                        覆盖同名表
+                    </label>
+                    <button class="sync-btn" type="button" onclick="uploadExcel()">上传并导入</button>
+                    <button class="sync-btn" type="button" onclick="loadExcelImports()" style="margin-left: 10px;">刷新记录</button>
+                </div>
+                <div id="excelImportMessage"></div>
+                <div id="excelImportList" class="forms-list"></div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -327,18 +378,24 @@
         let currentEventSource = null;
         
         // 切换标签页
-        function switchTab(tabName) {
-            // 移除所有active类
+        function switchTab(e, tabName) {
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-            
-            // 添加active类到当前标签
-            event.target.classList.add('active');
-            document.getElementById(tabName + '-tab').classList.add('active');
-            
-            // 如果切换到同步标签页，加载表单列表
+
+            const target = e ? (e.currentTarget || e.target) : null;
+            if (target) {
+                target.classList.add('active');
+            }
+
+            const tabContent = document.getElementById(tabName + '-tab');
+            if (tabContent) {
+                tabContent.classList.add('active');
+            }
+
             if (tabName === 'sync') {
                 loadForms(1);
+            } else if (tabName === 'excel') {
+                loadExcelImports();
             }
         }
         
@@ -395,14 +452,20 @@
             let html = `<h4>搜索结果 (共 ${data.total} 条)</h4>`;
             
             data.hits.forEach(hit => {
+                const datasetLabel = hit.sourceType === 'excel' ? '所属Excel' : '所属表单';
+                const tableInfo = hit.sourceType === 'excel' && hit.tableName ? ` | 数据表: ${hit.tableName}` : '';
                 html += `
                     <div class="result-item">
                         <div class="result-header">
-                            <div class="result-title">${getResultTitle(hit)}</div>
+                            <div class="result-title">
+                                ${getResultTitle(hit)}
+                                ${hit.jumpUrl ? `<a href="${hit.jumpUrl}" target="_blank" class="jump-link" title="打开详情页面">🔗</a>` : ''}
+                            </div>
                             <div class="result-score">匹配度: ${hit.score.toFixed(2)}</div>
                         </div>
                         <div class="result-meta">
-                            所属表单: ${hit.formName}
+                            ${datasetLabel}: ${hit.formName}${tableInfo}
+                            ${hit.jumpUrl ? `<button class="jump-btn" onclick="openFormDetail('${hit.jumpUrl}')">查看详情</button>` : ''}
                         </div>
                         <div class="result-content">
                             ${formatRecordData(hit.data, hit.highlight)}
@@ -420,6 +483,13 @@
         // 获取搜索结果标题
         function getResultTitle(hit) {
             const data = hit.data;
+
+            if (hit.sourceType === 'excel') {
+                const excelName = data['Excel名称'];
+                if (excelName && excelName.toString().trim()) {
+                    return excelName.toString().trim();
+                }
+            }
             
             // 首先尝试使用后端标记的主要字段（按优先级）
             for (let i = 0; i < 6; i++) {  // 最多检查前6个主要字段
@@ -804,6 +874,13 @@
             };
         }
         
+        // 打开表单详情页面
+        function openFormDetail(jumpUrl) {
+            if (jumpUrl) {
+                window.open(jumpUrl, '_blank');
+            }
+        }
+        
         // 更新异步同步UI
         function updateAsyncSyncUI(status) {
             const progressBar = document.getElementById('progressBar');
@@ -852,6 +929,126 @@
             }
             
             detailsDiv.textContent = details;
+        }
+
+        function uploadExcel() {
+            const fileInput = document.getElementById('excelFileInput');
+            const messageDiv = document.getElementById('excelImportMessage');
+            if (!messageDiv) {
+                return;
+            }
+
+            messageDiv.innerHTML = '';
+
+            if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+                messageDiv.innerHTML = '<div class="error">请选择要导入的Excel文件</div>';
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            const nameValue = document.getElementById('excelNameInput').value.trim();
+            if (nameValue) {
+                formData.append('name', nameValue);
+            }
+
+            const sheetName = document.getElementById('excelSheetInput').value.trim();
+            if (sheetName) {
+                formData.append('sheetName', sheetName);
+            }
+
+            const cover = document.getElementById('excelCoverCheckbox').checked;
+            formData.append('cover', cover);
+
+            messageDiv.innerHTML = '<div class="loading">正在导入，请稍候...</div>';
+
+            fetch('/api/excel/import', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const count = data.data && data.data.row_count ? data.data.row_count : 0;
+                    messageDiv.innerHTML = `<div class="success">导入成功，已写入 ${count} 行数据</div>`;
+                    fileInput.value = '';
+                    loadExcelImports();
+                } else {
+                    messageDiv.innerHTML = `<div class="error">导入失败: ${data.message}</div>`;
+                }
+            })
+            .catch(error => {
+                console.error('Excel import error', error);
+                messageDiv.innerHTML = `<div class="error">导入请求失败: ${error.message}</div>`;
+            });
+        }
+
+        function loadExcelImports() {
+            const listDiv = document.getElementById('excelImportList');
+            if (!listDiv) {
+                return;
+            }
+
+            listDiv.innerHTML = '<div class="loading">加载导入记录...</div>';
+
+            fetch('/api/excel/list')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        renderExcelImports(data.data || []);
+                    } else {
+                        listDiv.innerHTML = `<div class="error">加载导入记录失败: ${data.message}</div>`;
+                    }
+                })
+                .catch(error => {
+                    console.error('Load excel imports error', error);
+                    listDiv.innerHTML = `<div class="error">加载导入记录失败: ${error.message}</div>`;
+                });
+        }
+
+        function renderExcelImports(list) {
+            const listDiv = document.getElementById('excelImportList');
+            if (!listDiv) {
+                return;
+            }
+
+            if (!list || list.length === 0) {
+                listDiv.innerHTML = '<div class="loading">暂未导入Excel数据</div>';
+                return;
+            }
+
+            let html = '';
+            list.forEach(item => {
+                const columns = item.columnLabels ? Object.values(item.columnLabels) : [];
+                const columnPreview = columns.length > 0 ? columns.slice(0, 6).join('、') + (columns.length > 6 ? '…' : '') : '未检测到列信息';
+                const importTime = formatDateTime(item.importTime || item.import_time);
+                const sheetInfo = item.sheetName ? ` | 工作表: ${item.sheetName}` : '';
+                const displayName = item.displayName || item.tableName;
+
+                html += `
+                    <div class="form-item">
+                        <div class="form-info">
+                            <h4>${displayName}</h4>
+                            <div class="form-meta">数据库表: ${item.tableName} | ES索引: ${item.indexName}${sheetInfo}</div>
+                            <div class="form-meta">数据行数: ${item.rowCount} | 导入时间: ${importTime || '未知'}</div>
+                            <div class="form-meta">列: ${columnPreview}</div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            listDiv.innerHTML = html;
+        }
+
+        function formatDateTime(value) {
+            if (!value) {
+                return '';
+            }
+            if (typeof value === 'string') {
+                return value.replace('T', ' ').replace(/\.\d+/, '');
+            }
+            return value;
         }
         
         // 页面加载时的处理

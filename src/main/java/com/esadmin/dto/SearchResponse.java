@@ -38,6 +38,8 @@ public class SearchResponse {
         private String recordId;
         private Map<String, Object> data;
         private Map<String, List<String>> highlight;
+        private String jumpUrl;
+        private String sourceType;
         
         // Getters and Setters
         public float getScore() { return score; }
@@ -60,5 +62,11 @@ public class SearchResponse {
         
         public Map<String, List<String>> getHighlight() { return highlight; }
         public void setHighlight(Map<String, List<String>> highlight) { this.highlight = highlight; }
+        
+        public String getJumpUrl() { return jumpUrl; }
+        public void setJumpUrl(String jumpUrl) { this.jumpUrl = jumpUrl; }
+
+        public String getSourceType() { return sourceType; }
+        public void setSourceType(String sourceType) { this.sourceType = sourceType; }
     }
 }
