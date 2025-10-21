@@ -77,6 +77,74 @@
             gap: 10px;
             margin-bottom: 20px;
         }
+
+        .form-filter-section {
+            background: #fff;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .form-filter-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            font-size: 14px;
+            color: #555;
+        }
+
+        .form-filter-header label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+        }
+
+        .form-filter-summary {
+            font-size: 12px;
+            color: #888;
+        }
+
+        .form-filter-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .form-filter-item {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 6px 10px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .form-filter-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0 6px;
+            border-radius: 3px;
+            background: #e6f0ff;
+            color: #2254b3;
+            font-size: 12px;
+        }
+
+        .form-filter-item[data-type="excel"] .form-filter-badge {
+            background: #fff3cd;
+            color: #8a6200;
+        }
+
+        .form-filter-count {
+            color: #888;
+            font-size: 12px;
+        }
         
         .search-input {
             flex: 1;
@@ -310,6 +378,20 @@
                     <button class="search-btn" onclick="performSearch()">搜索</button>
                 </div>
                 
+                <div id="formFilters" class="form-filter-section">
+                    <div class="form-filter-header">
+                        <label>
+                            <input type="checkbox" id="formFilterAll" checked>
+                            全部表单
+                        </label>
+                        <span id="formFilterSummary" class="form-filter-summary"></span>
+                    </div>
+                    <div class="form-filter-search" style="margin: 10px 0;">
+                        <input type="text" id="formFilterSearch" class="search-input" placeholder="输入名称搜索数据源..." style="font-size: 14px; padding: 8px;">
+                    </div>
+                    <div id="formFilterList" class="form-filter-list"></div>
+                </div>
+                
                 <div id="searchResults" class="results"></div>
                 <div id="pagination" class="pagination"></div>
             </div>
@@ -376,6 +458,8 @@
         let currentFormsSearch = '';
         const pageSize = 10;
         let currentEventSource = null;
+        let availableSearchForms = [];
+        const selectedSearchFormIds = new Set();
         
         // 切换标签页
         function switchTab(e, tabName) {
@@ -398,7 +482,210 @@
                 loadExcelImports();
             }
         }
-        
+
+        function loadSearchForms() {
+            const listDiv = document.getElementById('formFilterList');
+            const summarySpan = document.getElementById('formFilterSummary');
+            if (!listDiv) {
+                return;
+            }
+
+            listDiv.innerHTML = '<div class="loading">加载表单信息...</div>';
+            if (summarySpan) {
+                summarySpan.textContent = '';
+            }
+
+            fetch('/api/search/forms')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        renderSearchFormFilters(data.data || []);
+                    } else {
+                        listDiv.innerHTML = `<div class="error">加载表单失败: ${data.message}</div>`;
+                        if (summarySpan) {
+                            summarySpan.textContent = '数据源列表加载失败';
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('加载表单失败', error);
+                    listDiv.innerHTML = `<div class="error">加载表单失败: ${error.message}</div>`;
+                    if (summarySpan) {
+                        summarySpan.textContent = '数据源列表加载失败';
+                    }
+                });
+        }
+
+        function renderSearchFormFilters(forms) {
+            const listDiv = document.getElementById('formFilterList');
+            const allCheckbox = document.getElementById('formFilterAll');
+            if (!listDiv) {
+                return;
+            }
+
+            availableSearchForms = Array.isArray(forms) ? forms : [];
+            selectedSearchFormIds.clear();
+
+            if (availableSearchForms.length === 0) {
+                listDiv.innerHTML = '<div class="loading">未找到数据源</div>';
+                if (allCheckbox) {
+                    allCheckbox.checked = true;
+                }
+                updateFormFilterSummary();
+                return;
+            }
+
+            // 渲染所有表单项
+            renderFilteredFormItems('');
+
+            if (allCheckbox) {
+                allCheckbox.checked = true;
+            }
+            updateFormFilterSummary();
+        }
+
+        function renderFilteredFormItems(searchText) {
+            const listDiv = document.getElementById('formFilterList');
+            const allCheckbox = document.getElementById('formFilterAll');
+            if (!listDiv) {
+                return;
+            }
+
+            const fragment = document.createDocumentFragment();
+            const searchLower = searchText.toLowerCase();
+
+            let visibleCount = 0;
+            availableSearchForms.forEach(form => {
+                if (!form || !form.id) {
+                    return;
+                }
+
+                // 过滤逻辑
+                if (searchText && !form.name.toLowerCase().includes(searchLower)) {
+                    return;
+                }
+                visibleCount++;
+
+                const itemLabel = document.createElement('label');
+                itemLabel.className = 'form-filter-item';
+                const typeValue = form.type || 'form';
+                itemLabel.dataset.type = typeValue;
+                if (form.index) {
+                    itemLabel.title = `${form.name || ''} (索引: ${form.index})`;
+                }
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = form.id;
+                checkbox.checked = selectedSearchFormIds.has(form.id);
+
+                checkbox.addEventListener('change', function(e) {
+                    if (e.target.checked) {
+                        selectedSearchFormIds.add(form.id);
+                        if (allCheckbox) {
+                            allCheckbox.checked = false;
+                        }
+                    } else {
+                        selectedSearchFormIds.delete(form.id);
+                        if (selectedSearchFormIds.size === 0 && allCheckbox) {
+                            allCheckbox.checked = true;
+                        }
+                    }
+                    updateFormFilterSummary();
+                });
+
+                const badgeSpan = document.createElement('span');
+                badgeSpan.className = 'form-filter-badge';
+                badgeSpan.textContent = typeValue === 'excel' ? 'Excel' : '表单';
+
+                const nameSpan = document.createElement('span');
+                nameSpan.textContent = form.name || '未命名表单';
+
+                const countSpan = document.createElement('span');
+                countSpan.className = 'form-filter-count';
+                const countValue = typeof form.count === 'number' ? form.count : 0;
+                countSpan.textContent = `(${countValue})`;
+
+                itemLabel.appendChild(checkbox);
+                itemLabel.appendChild(badgeSpan);
+                itemLabel.appendChild(nameSpan);
+                itemLabel.appendChild(countSpan);
+
+                fragment.appendChild(itemLabel);
+            });
+
+            listDiv.innerHTML = '';
+            if (visibleCount === 0 && searchText) {
+                listDiv.innerHTML = '<div class="loading">未找到匹配的数据源</div>';
+            } else {
+                listDiv.appendChild(fragment);
+            }
+        }
+
+        function filterFormItems() {
+            const searchInput = document.getElementById('formFilterSearch');
+            if (!searchInput) {
+                return;
+            }
+            const searchText = searchInput.value.trim();
+            renderFilteredFormItems(searchText);
+        }
+
+        function onFormFilterAllChange(event) {
+            if (!event || !event.target) {
+                return;
+            }
+
+            if (event.target.checked) {
+                selectedSearchFormIds.clear();
+                const listDiv = document.getElementById('formFilterList');
+                if (listDiv) {
+                    listDiv.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                        cb.checked = false;
+                    });
+                }
+            }
+
+            updateFormFilterSummary();
+        }
+
+        function updateFormFilterSummary() {
+            const summarySpan = document.getElementById('formFilterSummary');
+            const allCheckbox = document.getElementById('formFilterAll');
+            if (!summarySpan) {
+                return;
+            }
+
+            const totalForms = availableSearchForms.length;
+            const totalDocs = availableSearchForms.reduce((sum, item) => {
+                const value = item && typeof item.count === 'number' ? item.count : 0;
+                return sum + value;
+            }, 0);
+
+            if (!allCheckbox || allCheckbox.checked || selectedSearchFormIds.size === 0) {
+                summarySpan.textContent = `共 ${totalForms} 个数据源，合计 ${totalDocs} 条记录`;
+                return;
+            }
+
+            const selectedDocs = availableSearchForms.reduce((sum, item) => {
+                if (item && selectedSearchFormIds.has(item.id)) {
+                    const value = typeof item.count === 'number' ? item.count : 0;
+                    return sum + value;
+                }
+                return sum;
+            }, 0);
+
+            summarySpan.textContent = `已选 ${selectedSearchFormIds.size} 个数据源，包含 ${selectedDocs} 条记录`;
+        }
+
+        function getActiveFormIds() {
+            const allCheckbox = document.getElementById('formFilterAll');
+            if (!allCheckbox || allCheckbox.checked || selectedSearchFormIds.size === 0) {
+                return [];
+            }
+            return Array.from(selectedSearchFormIds);
+        }
+
         // 执行搜索
         function performSearch(page = 0) {
             const query = document.getElementById('searchInput').value.trim();
@@ -413,16 +700,22 @@
             const resultsDiv = document.getElementById('searchResults');
             resultsDiv.innerHTML = '<div class="loading">搜索中...</div>';
             
+            const formIds = getActiveFormIds();
+            const payload = {
+                query: query,
+                size: pageSize,
+                from: page * pageSize
+            };
+            if (formIds.length > 0) {
+                payload.formIds = formIds;
+            }
+
             fetch('/api/search/search', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    query: query,
-                    size: pageSize,
-                    from: page * pageSize
-                })
+                body: JSON.stringify(payload)
             })
             .then(response => response.json())
             .then(data => {
@@ -1066,6 +1359,24 @@
                     searchForms();
                 }
             });
+
+            // 绑定表单过滤搜索
+            const formFilterSearch = document.getElementById('formFilterSearch');
+            if (formFilterSearch) {
+                formFilterSearch.addEventListener('input', filterFormItems);
+                formFilterSearch.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        filterFormItems();
+                    }
+                });
+            }
+
+            const allCheckbox = document.getElementById('formFilterAll');
+            if (allCheckbox) {
+                allCheckbox.addEventListener('change', onFormFilterAllChange);
+            }
+            loadSearchForms();
             
             // 页面卸载时关闭SSE连接
             window.addEventListener('beforeunload', function() {
