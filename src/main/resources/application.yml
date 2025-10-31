@@ -77,11 +77,19 @@ app:
     batch-size: 2000
     db-batch-size: 1000
     thread-pool-size: 10
+    es-bulk-max-actions: ${APP_SYNC_ES_BULK_MAX_ACTIONS:4000}
+    es-retry-initial-backoff-millis: ${APP_SYNC_ES_RETRY_INITIAL_BACKOFF_MILLIS:5000}
+    es-retry-max-backoff-millis: ${APP_SYNC_ES_RETRY_MAX_BACKOFF_MILLIS:300000}
   search:
     page-size: 10
     max-size: 100
     timeout: 30
-
+    key-review:
+      enabled: ${APP_SEARCH_KEY_REVIEW_ENABLED:true}
+      url: ${APP_SEARCH_KEY_REVIEW_URL:http://192.168.31.157/seeyon/rest/token/dataManage/keyReview}
+      connect-timeout-ms: ${APP_SEARCH_KEY_REVIEW_CONNECT_TIMEOUT_MS:3000}
+      read-timeout-ms: ${APP_SEARCH_KEY_REVIEW_READ_TIMEOUT_MS:5000}
+    detail-base-url: ${APP_SEARCH_DETAIL_BASE_URL:http://192.168.31.157/seeyon/rest/token/dataManage/openData}
 # 日志配置
 logging:
   level:

@@ -5,6 +5,9 @@ import com.esadmin.dto.SyncResult;
 import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.client.indices.GetIndexRequest;
+import org.elasticsearch.client.core.CountRequest;
+import org.elasticsearch.client.core.CountResponse;
+import org.elasticsearch.index.query.QueryBuilders;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,10 +33,7 @@ public class SyncTaskService {
     @Autowired
     private MemberService memberService;
 
-    /**
-     * 每60分钟执行一次数据同步任务
-     */
-    @Scheduled(fixedDelay = 24 * 60 * 60 * 1000) // 60分钟 = 60 * 60 * 1000 毫秒
+    @Scheduled(cron = "0 0 0 * * ?") // 每天0点执行一次
     public void executeSync() {
         log.info("开始执行定时同步任务");
         
@@ -126,20 +126,12 @@ public class SyncTaskService {
             // 这里可以直接调用SyncService中的私有方法逻辑，但为了简化，直接判断索引是否为空
             String indexName = "form_" + formId;
             
-            // 通过count API检查索引中是否有文档
-            org.elasticsearch.action.search.SearchRequest searchRequest = 
-                new org.elasticsearch.action.search.SearchRequest(indexName);
-            org.elasticsearch.search.builder.SearchSourceBuilder searchSourceBuilder = 
-                new org.elasticsearch.search.builder.SearchSourceBuilder();
-            searchSourceBuilder.size(0); // 只获取总数，不获取文档
-            searchRequest.source(searchSourceBuilder);
-            
-            org.elasticsearch.action.search.SearchResponse searchResponse = 
-                esClient.search(searchRequest, RequestOptions.DEFAULT);
-            
-            long totalHits = searchResponse.getHits().getTotalHits().value;
+            CountRequest countRequest = new CountRequest(indexName);
+            countRequest.query(QueryBuilders.matchAllQuery());
+            CountResponse countResponse = esClient.count(countRequest, RequestOptions.DEFAULT);
+            long totalHits = countResponse.getCount();
             return totalHits > 0 ? 1L : 0L; // 有数据返回1，无数据返回0
-            
+
         } catch (Exception e) {
             log.debug("获取ES记录数失败: formId={}", formId, e);
             return 0L;

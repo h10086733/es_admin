@@ -12,15 +12,17 @@ import org.elasticsearch.action.admin.indices.refresh.RefreshRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.RequestOptions;
+import org.elasticsearch.client.ResponseException;
 import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.client.indices.CreateIndexRequest;
 import org.elasticsearch.client.indices.GetIndexRequest;
-import org.elasticsearch.client.indices.PutMappingRequest;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.sort.SortOrder;
 import org.elasticsearch.xcontent.XContentType;
+import org.elasticsearch.ElasticsearchStatusException;
+import org.elasticsearch.rest.RestStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.elasticsearch.core.TimeValue;
@@ -28,8 +30,13 @@ import org.elasticsearch.core.TimeValue;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.Collection;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.sql.Date;
+import java.io.IOException;
+import java.util.Locale;
 
 @Service
 public class SyncService {
@@ -49,8 +56,11 @@ public class SyncService {
     private final FormService formService;
     private final MemberService memberService;
     private final ObjectMapper objectMapper;
-    
-    
+
+    private final Map<String, Boolean> indexExistenceCache = new ConcurrentHashMap<>();
+    private final Map<String, Object> indexLocks = new ConcurrentHashMap<>();
+
+
     public SyncService(RestHighLevelClient esClient, FormService formService, 
                       MemberService memberService, ObjectMapper objectMapper) {
         this.esClient = esClient;
@@ -64,6 +74,21 @@ public class SyncService {
 
     @Value("${app.sync.db-batch-size:1000}")
     private int dbBatchSize;
+
+    @Value("${app.sync.es-max-retries:5}")
+    private int esMaxRetries;
+
+    @Value("${app.sync.es-retry-initial-backoff-millis:200}")
+    private long esRetryInitialBackoffMillis;
+
+    @Value("${app.sync.es-retry-max-backoff-millis:5000}")
+    private long esRetryMaxBackoffMillis;
+
+    @Value("${app.sync.es-bulk-timeout-seconds:60}")
+    private int bulkTimeoutSeconds;
+
+    @Value("${app.sync.es-bulk-max-actions:4000}")
+    private int esBulkMaxActions;
 
     public SyncResult syncFormData(String formId, boolean fullSync) {
         long startTime = System.currentTimeMillis();
@@ -149,80 +174,74 @@ public class SyncService {
     /**
      * 无索引增量同步方案 - 适用于大表且无法创建modify_date索引的场景
      */
-    private SyncResult syncFormDataWithoutIndexes(String formId, FormDto form, String tableName, 
-            List<Map<String, Object>> fields, Map<String, String> fieldLabels, 
+    private SyncResult syncFormDataWithoutIndexes(String formId, FormDto form, String tableName,
+            List<Map<String, Object>> fields, Map<String, String> fieldLabels,
             Map<String, String> memberCache, Map<String, Integer> primaryFieldsMap, long startTime) {
-        
+
         try {
             log.info("执行无索引增量同步: formId={}", formId);
-            
-            // 确保索引存在（已在主流程中创建，这里不需要重复）
+
             String indexName = "form_" + formId;
-            
-            // 获取ES中已同步的记录ID集合
             Set<Long> syncedIds = getSyncedIdsFromES(formId);
             log.info("ES中已同步记录数: {}", syncedIds.size());
-            
-            // 获取数据库总记录数
+
             long dbTotalCount = formService.getTableTotalCount(tableName);
             log.info("数据库总记录数: {}", dbTotalCount);
-            
+
             long successCount = 0;
             long totalChecked = 0;
             int offset = 0;
-            
-            // 分批处理数据库记录
+            BulkSyncBuffer bulkBuffer = newBulkBuffer(formId, indexName, tableName, fieldLabels, memberCache, primaryFieldsMap);
+
             while (offset < dbTotalCount) {
                 List<Map<String, Object>> batch = formService.getTableDataByIdBatch(tableName, dbBatchSize, offset);
-                
                 if (batch.isEmpty()) {
                     break;
                 }
-                
-                // 筛选出需要同步的记录（不在ES中的记录）
+
                 List<Map<String, Object>> recordsToSync = new ArrayList<>();
                 for (Map<String, Object> record : batch) {
                     Object idObj = record.get("ID");
-                    if (idObj != null) {
-                        Long recordId = Long.valueOf(idObj.toString());
-                        if (!syncedIds.contains(recordId)) {
-                            recordsToSync.add(record);
-                        }
+                    if (idObj == null) {
+                        continue;
+                    }
+                    Long recordId = Long.valueOf(idObj.toString());
+                    if (!syncedIds.contains(recordId)) {
+                        recordsToSync.add(record);
                     }
                 }
-                
+
                 totalChecked += batch.size();
-                
-                // 同步新记录
+
                 if (!recordsToSync.isEmpty()) {
-                    long batchSuccess = syncRecordBatch(formId, indexName, tableName, recordsToSync, fieldLabels, memberCache, primaryFieldsMap);
-                    successCount += batchSuccess;
-                    
-                    log.info("批次同步完成: 检查 {} 条，新增 {} 条，累计同步 {} 条", 
+                    successCount += bulkBuffer.addRecords(recordsToSync);
+                    log.info("批次同步完成: 检查 {} 条，新增 {} 条，累计同步 {} 条",
                             batch.size(), recordsToSync.size(), successCount);
                 }
-                
+
                 offset += batch.size();
-                
-                // 打印总体进度
+
                 if (totalChecked % (dbBatchSize * 10) == 0) {
-                    double progress = (double) totalChecked / dbTotalCount * 100;
-                    double elapsed = (System.currentTimeMillis() - startTime) / 1000.0;
-                    log.info("无索引增量同步进度: {:.1f}% ({}/{}), 新增: {} 条, 耗时: {:.1f}s", 
-                            progress, totalChecked, dbTotalCount, successCount, elapsed);
+                    double progress = (double) totalChecked / Math.max(1, dbTotalCount) * 100.0;
+                    double elapsedSeconds = (System.currentTimeMillis() - startTime) / 1000.0;
+                    String progressStr = String.format(Locale.ROOT, "%.1f", progress);
+                    String elapsedStr = String.format(Locale.ROOT, "%.1f", elapsedSeconds);
+                    log.info("无索引增量同步进度: {}%，已检查 {}/{}，新增 {} 条，耗时 {}s",
+                            progressStr, totalChecked, dbTotalCount, successCount, elapsedStr);
                 }
             }
-            
-            // 刷新索引
-            esClient.indices().refresh(new RefreshRequest(indexName), RequestOptions.DEFAULT);
-            
+
+            successCount += bulkBuffer.flush();
+            refreshIndexSafely(indexName);
+
             double elapsed = (System.currentTimeMillis() - startTime) / 1000.0;
-            double rate = successCount / elapsed;
-            
+            double rate = successCount / Math.max(elapsed, 0.001);
+
             SyncResult result = new SyncResult();
             result.setSuccess(true);
-            result.setMessage(String.format("无索引增量同步完成，检查 %d 条记录，新增同步 %d 条记录，耗时 %.1f 秒，平均速度 %.1f 条/秒", 
-                totalChecked, successCount, elapsed, rate));
+            result.setMessage(String.format(Locale.ROOT,
+                    "无索引增量同步完成，检查 %d 条记录，新增同步 %d 条记录，耗时 %.1f 秒，平均速度 %.1f 条/秒",
+                    totalChecked, successCount, elapsed, rate));
             result.setCount(successCount);
             result.setTotal(totalChecked);
             result.setElapsedTime(elapsed);
@@ -230,9 +249,9 @@ public class SyncService {
             result.setFormId(formId);
             result.setFormName(form.getName());
             result.setType("form_sync_no_index");
-            
+
             return result;
-            
+
         } catch (Exception e) {
             log.error("无索引增量同步失败", e);
             return createFailureResult("无索引增量同步失败: " + e.getMessage(), formId, form.getName());
@@ -253,6 +272,7 @@ public class SyncService {
             // 同步数据
             long successCount = 0;
             long totalCount = 0;
+            BulkSyncBuffer bulkBuffer = newBulkBuffer(formId, indexName, tableName, fieldLabels, memberCache, primaryFieldsMap);
             
             // 使用基于时间的安全增量同步方法
             LocalDateTime lastModifyDateTime = null;
@@ -303,28 +323,7 @@ public class SyncService {
                 }
 
                 totalCount += batch.size();
-                
-                // 直接处理整个批次到ES（避免双重批处理）
-                BulkRequest bulkRequest = new BulkRequest();
-                
-                for (Map<String, Object> record : batch) {
-                    String docId = formId + "_" + record.get("ID");
-                    Map<String, Object> doc = buildDocument(formId, tableName, record, fieldLabels, memberCache, primaryFieldsMap);
-                    
-                    // 使用固定的docId确保相同记录会被覆盖（天然去重）
-                    IndexRequest indexRequest = new IndexRequest(indexName)
-                        .id(docId)
-                        .source(doc, XContentType.JSON);
-                    bulkRequest.add(indexRequest);
-                }
-                
-                // 执行批量插入
-                BulkResponse bulkResponse = esClient.bulk(bulkRequest, RequestOptions.DEFAULT);
-                if (bulkResponse.hasFailures()) {
-                    log.error("批量插入失败: {}", bulkResponse.buildFailureMessage());
-                } else {
-                    successCount += batch.size();
-                }
+                successCount += bulkBuffer.addRecords(batch);
 
                 // 更新游标位置
                 if (!fullSync && !batch.isEmpty()) {
@@ -384,8 +383,8 @@ public class SyncService {
                     successCount, totalCount, elapsed, rate));
             }
 
-            // 刷新索引
-            esClient.indices().refresh(new RefreshRequest(indexName), RequestOptions.DEFAULT);
+            successCount += bulkBuffer.flush();
+            refreshIndexSafely(indexName);
 
             double elapsed = (System.currentTimeMillis() - startTime) / 1000.0;
             double rate = successCount / elapsed;
@@ -411,72 +410,194 @@ public class SyncService {
     }
 
     private boolean createIndexMapping(String indexName, List<Map<String, Object>> fields) {
-        try {
-            // 检查索引是否已存在
-            GetIndexRequest getRequest = new GetIndexRequest(indexName);
-            if (esClient.indices().exists(getRequest, RequestOptions.DEFAULT)) {
+        Object lock = indexLocks.computeIfAbsent(indexName, key -> new Object());
+        synchronized (lock) {
+            if (Boolean.TRUE.equals(indexExistenceCache.get(indexName))) {
+                return true;
+            }
+
+            if (indexExists(indexName)) {
                 log.debug("索引已存在，跳过创建: {}", indexName);
                 return true;
             }
 
-            // 构建映射
-            Map<String, Object> properties = new HashMap<>();
-            properties.put("form_id", Map.of("type", "keyword"));
-            properties.put("table_name", Map.of("type", "keyword"));
-            properties.put("record_id", Map.of("type", "long"));
-            properties.put("sync_time", Map.of("type", "date"));
+            try {
+                Map<String, Object> properties = new HashMap<>();
+                properties.put("form_id", Map.of("type", "keyword"));
+                properties.put("table_name", Map.of("type", "keyword"));
+                properties.put("record_id", Map.of("type", "long"));
+                properties.put("sync_time", Map.of("type", "date"));
 
-            // 添加系统字段映射（使用原始字段名用于排序和查询）
-            // 支持多种日期格式，包括原始的 "yyyy-MM-dd HH:mm:ss.S" 格式
-            String dateFormats = "strict_date_optional_time||epoch_millis||yyyy-MM-dd HH:mm:ss.S||yyyy-MM-dd HH:mm:ss||yyyy-MM-dd";
-            properties.put("modify_date", Map.of("type", "date", "format", dateFormats));
-            properties.put("start_date", Map.of("type", "date", "format", dateFormats));
-            properties.put("start_member_id", Map.of("type", "long"));
-            properties.put("modify_member_id", Map.of("type", "long"));
-            properties.put("approve_member_id", Map.of("type", "long"));
-            properties.put("ratify_member_id", Map.of("type", "long"));
+                String dateFormats = "strict_date_optional_time||epoch_millis||yyyy-MM-dd HH:mm:ss.S||yyyy-MM-dd HH:mm:ss||yyyy-MM-dd";
+                properties.put("modify_date", Map.of("type", "date", "format", dateFormats));
+                properties.put("start_date", Map.of("type", "date", "format", dateFormats));
+                properties.put("start_member_id", Map.of("type", "long"));
+                properties.put("modify_member_id", Map.of("type", "long"));
+                properties.put("approve_member_id", Map.of("type", "long"));
+                properties.put("ratify_member_id", Map.of("type", "long"));
 
-            // 添加表单字段映射
-            for (Map<String, Object> field : fields) {
-                String fieldName = getFieldName(field);
-                String fieldType = getFieldType(field);
-                
-                if (fieldType.matches("(?i)text|VARCHAR")) {
-                    properties.put(fieldName, Map.of("type", "text", "analyzer", "standard"));
-                } else if (fieldType.matches("(?i)datetime|TIMESTAMP|date|DATE")) {
-                    properties.put(fieldName, Map.of("type", "date", "format", dateFormats));
-                } else if (fieldType.matches("(?i)DECIMAL|INTEGER")) {
-                    properties.put(fieldName, Map.of("type", "double"));
-                } else if (fieldType.equals("member")) {
-                    properties.put(fieldName, Map.of("type", "keyword"));
-                } else {
-                    properties.put(fieldName, Map.of("type", "text"));
+                for (Map<String, Object> field : fields) {
+                    String fieldName = getFieldName(field);
+                    String fieldType = getFieldType(field);
+
+                    if (fieldType.matches("(?i)text|VARCHAR")) {
+                        properties.put(fieldName, Map.of("type", "text", "analyzer", "standard"));
+                    } else if (fieldType.matches("(?i)datetime|TIMESTAMP|date|DATE")) {
+                        properties.put(fieldName, Map.of("type", "date", "format", dateFormats));
+                    } else if (fieldType.matches("(?i)DECIMAL|INTEGER")) {
+                        properties.put(fieldName, Map.of("type", "double"));
+                    } else if (fieldType.equals("member")) {
+                        properties.put(fieldName, Map.of("type", "keyword"));
+                    } else {
+                        properties.put(fieldName, Map.of("type", "text"));
+                    }
                 }
-            }
 
-            Map<String, Object> mapping = Map.of(
-                "mappings", Map.of("properties", properties),
-                "settings", Map.of(
-                    "analysis", Map.of(
-                        "analyzer", Map.of(
-                            "default", Map.of("type", "standard")
+                Map<String, Object> mapping = Map.of(
+                    "mappings", Map.of("properties", properties),
+                    "settings", Map.of(
+                        "analysis", Map.of(
+                            "analyzer", Map.of(
+                                "default", Map.of("type", "standard")
+                            )
                         )
                     )
-                )
+                );
+
+                CreateIndexRequest createRequest = new CreateIndexRequest(indexName);
+                createRequest.source(objectMapper.writeValueAsString(mapping), XContentType.JSON);
+
+                executeWithRetry(() -> {
+                    esClient.indices().create(createRequest, RequestOptions.DEFAULT);
+                    return Boolean.TRUE;
+                }, "创建索引 " + indexName);
+
+                indexExistenceCache.put(indexName, true);
+                log.info("创建索引 {} 成功", indexName);
+                return true;
+
+            } catch (Exception e) {
+                indexExistenceCache.remove(indexName);
+                log.error("创建索引失败: {}", indexName, e);
+                return false;
+            }
+        }
+    }
+
+    private boolean indexExists(String indexName) {
+        Boolean cached = indexExistenceCache.get(indexName);
+        if (Boolean.TRUE.equals(cached)) {
+            return true;
+        }
+
+        GetIndexRequest getRequest = new GetIndexRequest(indexName);
+        try {
+            Boolean exists = executeWithRetry(
+                () -> esClient.indices().exists(getRequest, RequestOptions.DEFAULT),
+                "检查索引是否存在 " + indexName
             );
 
-            // 创建索引
-            CreateIndexRequest createRequest = new CreateIndexRequest(indexName);
-            createRequest.source(objectMapper.writeValueAsString(mapping), XContentType.JSON);
-            esClient.indices().create(createRequest, RequestOptions.DEFAULT);
-            
-            log.info("创建索引 {} 成功", indexName);
-            return true;
-            
+            if (Boolean.TRUE.equals(exists)) {
+                indexExistenceCache.put(indexName, true);
+                return true;
+            }
+
+            return false;
+
         } catch (Exception e) {
-            log.error("创建索引失败", e);
+            log.error("检查索引是否存在失败: {}", indexName, e);
             return false;
         }
+    }
+
+    private <T> T executeWithRetry(ESCallable<T> action, String actionDescription) throws Exception {
+        int attempt = 0;
+        int maxRetries = Math.max(0, esMaxRetries);
+
+        while (true) {
+            try {
+                return action.call();
+            } catch (Exception ex) {
+                attempt++;
+
+                if (!shouldRetry(ex) || attempt > maxRetries) {
+                    throw ex;
+                }
+
+                long sleepMillis = calculateBackoffMillis(attempt);
+                String sleepHuman = String.format(Locale.ROOT, "%.1f", sleepMillis / 1000.0);
+                log.warn("ES操作 {} 失败: {}，将在 {} ms (~{} 秒) 后重试 (第 {}/{})",
+                        actionDescription, getStatusForLog(ex), sleepMillis, sleepHuman, attempt, maxRetries);
+
+                try {
+                    TimeUnit.MILLISECONDS.sleep(sleepMillis);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("重试被中断", ie);
+                }
+            }
+        }
+    }
+
+    private long calculateBackoffMillis(int attempt) {
+        long baseDelay = Math.max(50L, esRetryInitialBackoffMillis);
+        long maxDelay = Math.max(baseDelay, esRetryMaxBackoffMillis);
+        long multiplier = 1L << Math.max(0, attempt - 1);
+        long backoff = baseDelay * multiplier;
+        return Math.min(backoff, maxDelay);
+    }
+
+    private boolean shouldRetry(Throwable throwable) {
+        if (throwable == null) {
+            return false;
+        }
+
+        ElasticsearchStatusException statusException = findCause(throwable, ElasticsearchStatusException.class);
+        if (statusException != null && statusException.status() == RestStatus.TOO_MANY_REQUESTS) {
+            return true;
+        }
+
+        ResponseException responseException = findCause(throwable, ResponseException.class);
+        if (responseException != null && responseException.getResponse() != null &&
+                responseException.getResponse().getStatusLine().getStatusCode() == 429) {
+            return true;
+        }
+
+        if (findCause(throwable, IOException.class) != null) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private String getStatusForLog(Throwable throwable) {
+        ElasticsearchStatusException statusException = findCause(throwable, ElasticsearchStatusException.class);
+        if (statusException != null) {
+            return statusException.status().toString();
+        }
+
+        ResponseException responseException = findCause(throwable, ResponseException.class);
+        if (responseException != null && responseException.getResponse() != null) {
+            return responseException.getResponse().getStatusLine().toString();
+        }
+
+        return throwable.getMessage();
+    }
+
+    private <T extends Throwable> T findCause(Throwable throwable, Class<T> type) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (type.isInstance(current)) {
+                return type.cast(current);
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
+
+    @FunctionalInterface
+    private interface ESCallable<T> {
+        T call() throws Exception;
     }
 
     private Map<String, Object> buildDocument(String formId, String tableName, 
@@ -753,33 +874,23 @@ public class SyncService {
     private String getLatestModifyDateFromES(String formId) {
         try {
             String indexName = "form_" + formId;
-            
-            // 检查索引是否存在
-            GetIndexRequest getRequest = new GetIndexRequest(indexName);
-            if (!esClient.indices().exists(getRequest, RequestOptions.DEFAULT)) {
+
+            if (!indexExists(indexName)) {
                 log.debug("索引不存在，返回null作为起始时间: {}", indexName);
                 return null;
             }
-            
-            // 构建搜索请求，按修改时间降序排序
+
             SearchRequest searchRequest = new SearchRequest(indexName);
             SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
-            
-            // 查询所有文档
             searchSourceBuilder.query(QueryBuilders.matchAllQuery());
-            
-            // 按修改时间降序排序
             searchSourceBuilder.sort("modify_date", SortOrder.DESC);
-            
-            // 只取第一条记录
             searchSourceBuilder.size(1);
-            
-            // 只返回修改时间字段
             searchSourceBuilder.fetchSource(new String[]{"modify_date"}, null);
-            
             searchRequest.source(searchSourceBuilder);
-            
-            SearchResponse searchResponse = esClient.search(searchRequest, RequestOptions.DEFAULT);
+
+            SearchResponse searchResponse = executeWithRetry(
+                    () -> esClient.search(searchRequest, RequestOptions.DEFAULT),
+                    "查询索引最新修改时间 " + indexName);
             
             if (searchResponse.getHits().getTotalHits().value > 0) {
                 SearchHit hit = searchResponse.getHits().getAt(0);
@@ -808,34 +919,24 @@ public class SyncService {
     private Map<String, Object> getLatestRecordFromES(String formId) {
         try {
             String indexName = "form_" + formId;
-            
-            // 检查索引是否存在
-            GetIndexRequest getRequest = new GetIndexRequest(indexName);
-            if (!esClient.indices().exists(getRequest, RequestOptions.DEFAULT)) {
+
+            if (!indexExists(indexName)) {
                 log.debug("索引不存在，返回null: {}", indexName);
                 return null;
             }
-            
-            // 构建搜索请求，按修改时间和ID降序排序
+
             SearchRequest searchRequest = new SearchRequest(indexName);
             SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
-            
-            // 查询所有文档
             searchSourceBuilder.query(QueryBuilders.matchAllQuery());
-            
-            // 按组合索引顺序排序：先按修改时间降序，再按ID降序
             searchSourceBuilder.sort("modify_date", SortOrder.DESC);
             searchSourceBuilder.sort("record_id", SortOrder.DESC);
-            
-            // 只取第一条记录
             searchSourceBuilder.size(1);
-            
-            // 返回修改时间和记录ID字段
             searchSourceBuilder.fetchSource(new String[]{"modify_date", "record_id"}, null);
-            
             searchRequest.source(searchSourceBuilder);
-            
-            SearchResponse searchResponse = esClient.search(searchRequest, RequestOptions.DEFAULT);
+
+            SearchResponse searchResponse = executeWithRetry(
+                    () -> esClient.search(searchRequest, RequestOptions.DEFAULT),
+                    "查询索引最新记录 " + indexName);
             
             if (searchResponse.getHits().getTotalHits().value > 0) {
                 SearchHit hit = searchResponse.getHits().getAt(0);
@@ -916,9 +1017,7 @@ public class SyncService {
         try {
             String indexName = "form_" + formId;
             
-            // 检查索引是否存在
-            GetIndexRequest getRequest = new GetIndexRequest(indexName);
-            if (!esClient.indices().exists(getRequest, RequestOptions.DEFAULT)) {
+            if (!indexExists(indexName)) {
                 log.debug("索引不存在，返回空ID集合: {}", indexName);
                 return syncedIds;
             }
@@ -935,7 +1034,9 @@ public class SyncService {
             searchRequest.source(searchSourceBuilder);
             searchRequest.scroll(TimeValue.timeValueMinutes(2L));
             
-            SearchResponse searchResponse = esClient.search(searchRequest, RequestOptions.DEFAULT);
+            SearchResponse searchResponse = executeWithRetry(
+                    () -> esClient.search(searchRequest, RequestOptions.DEFAULT),
+                    "初始化scroll查询 " + indexName);
             String scrollId = searchResponse.getScrollId();
             
             // 处理第一批结果
@@ -956,8 +1057,11 @@ public class SyncService {
                     new org.elasticsearch.action.search.SearchScrollRequest(scrollId);
                 scrollRequest.scroll(TimeValue.timeValueMinutes(2L));
                 
-                searchResponse = esClient.scroll(scrollRequest, RequestOptions.DEFAULT);
-                scrollId = searchResponse.getScrollId();
+                SearchResponse nextResponse = executeWithRetry(
+                        () -> esClient.scroll(scrollRequest, RequestOptions.DEFAULT),
+                        "scroll分页查询 " + indexName);
+                scrollId = nextResponse.getScrollId();
+                searchResponse = nextResponse;
                 
                 for (SearchHit hit : searchResponse.getHits().getHits()) {
                     Object recordIdObj = hit.getSourceAsMap().get("record_id");
@@ -972,10 +1076,15 @@ public class SyncService {
             }
             
             // 清理scroll
-            org.elasticsearch.action.search.ClearScrollRequest clearScrollRequest = 
-                new org.elasticsearch.action.search.ClearScrollRequest();
-            clearScrollRequest.addScrollId(scrollId);
-            esClient.clearScroll(clearScrollRequest, RequestOptions.DEFAULT);
+            if (scrollId != null && !scrollId.isEmpty()) {
+                org.elasticsearch.action.search.ClearScrollRequest clearScrollRequest =
+                        new org.elasticsearch.action.search.ClearScrollRequest();
+                clearScrollRequest.addScrollId(scrollId);
+                executeWithRetry(() -> {
+                    esClient.clearScroll(clearScrollRequest, RequestOptions.DEFAULT);
+                    return Boolean.TRUE;
+                }, "清理scroll上下文 " + indexName);
+            }
             
             log.debug("从ES获取已同步ID集合完成: formId={}, 记录数={}", formId, syncedIds.size());
             
@@ -992,31 +1101,118 @@ public class SyncService {
     private long syncRecordBatch(String formId, String indexName, String tableName, 
                                 List<Map<String, Object>> records, Map<String, String> fieldLabels,
                                 Map<String, String> memberCache, Map<String, Integer> primaryFieldsMap) {
-        
-        try {
+        if (records == null || records.isEmpty()) {
+            return 0L;
+        }
+
+        long successCount = 0L;
+        int flushThreshold = Math.max(1, esBulkMaxActions);
+        int chunkSize = Math.max(1, Math.min(batchSize, flushThreshold));
+        int timeoutSeconds = Math.max(5, bulkTimeoutSeconds);
+
+        for (int from = 0; from < records.size(); from += chunkSize) {
+            int to = Math.min(records.size(), from + chunkSize);
+            List<Map<String, Object>> chunk = records.subList(from, to);
+
             BulkRequest bulkRequest = new BulkRequest();
-            
-            for (Map<String, Object> record : records) {
+            bulkRequest.timeout(TimeValue.timeValueSeconds(timeoutSeconds));
+
+            for (Map<String, Object> record : chunk) {
                 String docId = formId + "_" + record.get("ID");
                 Map<String, Object> doc = buildDocument(formId, tableName, record, fieldLabels, memberCache, primaryFieldsMap);
-                
+
                 IndexRequest indexRequest = new IndexRequest(indexName)
                     .id(docId)
                     .source(doc, XContentType.JSON);
                 bulkRequest.add(indexRequest);
             }
-            
-            BulkResponse bulkResponse = esClient.bulk(bulkRequest, RequestOptions.DEFAULT);
-            if (bulkResponse.hasFailures()) {
-                log.error("批量同步失败: {}", bulkResponse.buildFailureMessage());
-                return 0L;
-            } else {
-                return records.size();
+
+            try {
+                BulkResponse bulkResponse = executeWithRetry(
+                        () -> esClient.bulk(bulkRequest, RequestOptions.DEFAULT),
+                        "批量写入索引 " + indexName);
+
+                if (bulkResponse.hasFailures()) {
+                    log.error("批量同步失败: {}", bulkResponse.buildFailureMessage());
+                } else {
+                    successCount += chunk.size();
+                }
+
+            } catch (Exception e) {
+                log.error("批量同步记录失败: formId={}, 索引={}, 批次大小={}",
+                        formId, indexName, chunk.size(), e);
             }
-            
+        }
+
+        return successCount;
+    }
+
+    private BulkSyncBuffer newBulkBuffer(String formId, String indexName, String tableName,
+                                         Map<String, String> fieldLabels,
+                                         Map<String, String> memberCache,
+                                         Map<String, Integer> primaryFieldsMap) {
+        return new BulkSyncBuffer(formId, indexName, tableName, fieldLabels, memberCache, primaryFieldsMap);
+    }
+
+    private void refreshIndexSafely(String indexName) {
+        try {
+            executeWithRetry(() -> {
+                esClient.indices().refresh(new RefreshRequest(indexName), RequestOptions.DEFAULT);
+                return Boolean.TRUE;
+            }, "刷新索引 " + indexName);
         } catch (Exception e) {
-            log.error("批量同步记录失败: formId={}, 记录数={}", formId, records.size(), e);
-            return 0L;
+            log.warn("刷新索引失败: {}", indexName, e);
+        }
+    }
+
+    private final class BulkSyncBuffer {
+        private final List<Map<String, Object>> buffer = new ArrayList<>();
+        private final int flushThreshold;
+        private final String formId;
+        private final String indexName;
+        private final String tableName;
+        private final Map<String, String> fieldLabels;
+        private final Map<String, String> memberCache;
+        private final Map<String, Integer> primaryFieldsMap;
+
+        private BulkSyncBuffer(String formId, String indexName, String tableName,
+                               Map<String, String> fieldLabels,
+                               Map<String, String> memberCache,
+                               Map<String, Integer> primaryFieldsMap) {
+            this.formId = formId;
+            this.indexName = indexName;
+            this.tableName = tableName;
+            this.fieldLabels = fieldLabels;
+            this.memberCache = memberCache;
+            this.primaryFieldsMap = primaryFieldsMap;
+            this.flushThreshold = Math.max(1, esBulkMaxActions);
+        }
+
+        private long addRecords(Collection<Map<String, Object>> records) {
+            if (records == null || records.isEmpty()) {
+                return 0L;
+            }
+
+            long synced = 0L;
+            for (Map<String, Object> record : records) {
+                if (record == null) {
+                    continue;
+                }
+                buffer.add(record);
+                if (buffer.size() >= flushThreshold) {
+                    synced += flush();
+                }
+            }
+            return synced;
+        }
+
+        private long flush() {
+            if (buffer.isEmpty()) {
+                return 0L;
+            }
+            List<Map<String, Object>> toFlush = new ArrayList<>(buffer);
+            buffer.clear();
+            return syncRecordBatch(formId, indexName, tableName, toFlush, fieldLabels, memberCache, primaryFieldsMap);
         }
     }
 
@@ -1099,26 +1295,42 @@ public class SyncService {
                 if (batch.isEmpty()) {
                     break;
                 }
-                
-                // 构建ES文档并批量写入
-                BulkRequest bulkRequest = new BulkRequest();
-                
-                for (Map<String, Object> record : batch) {
-                    String docId = formId + "_" + tableName + "_" + record.get("ID");
-                    Map<String, Object> doc = buildSubTableDocument(formId, tableName, record, fieldLabels, memberCache);
-                    
-                    IndexRequest indexRequest = new IndexRequest(indexName)
-                        .id(docId)
-                        .source(doc, XContentType.JSON);
-                    bulkRequest.add(indexRequest);
-                }
-                
-                // 执行批量插入
-                BulkResponse bulkResponse = esClient.bulk(bulkRequest, RequestOptions.DEFAULT);
-                if (bulkResponse.hasFailures()) {
-                    log.error("附表批量插入失败: {}", bulkResponse.buildFailureMessage());
-                } else {
-                    successCount += batch.size();
+                int flushThreshold = Math.max(1, esBulkMaxActions);
+                int chunkSize = Math.max(1, Math.min(dbBatchSize, flushThreshold));
+                int timeoutSeconds = Math.max(5, bulkTimeoutSeconds);
+
+                for (int from = 0; from < batch.size(); from += chunkSize) {
+                    int to = Math.min(batch.size(), from + chunkSize);
+                    List<Map<String, Object>> chunk = batch.subList(from, to);
+
+                    BulkRequest bulkRequest = new BulkRequest();
+                    bulkRequest.timeout(TimeValue.timeValueSeconds(timeoutSeconds));
+
+                    for (Map<String, Object> record : chunk) {
+                        String docId = formId + "_" + tableName + "_" + record.get("ID");
+                        Map<String, Object> doc = buildSubTableDocument(formId, tableName, record, fieldLabels, memberCache);
+
+                        IndexRequest indexRequest = new IndexRequest(indexName)
+                                .id(docId)
+                                .source(doc, XContentType.JSON);
+                        bulkRequest.add(indexRequest);
+                    }
+
+                    try {
+                        BulkResponse bulkResponse = executeWithRetry(
+                                () -> esClient.bulk(bulkRequest, RequestOptions.DEFAULT),
+                                "附表批量写入索引 " + indexName);
+
+                        if (bulkResponse.hasFailures()) {
+                            log.error("附表批量插入失败: {}", bulkResponse.buildFailureMessage());
+                        } else {
+                            successCount += chunk.size();
+                        }
+
+                    } catch (Exception e) {
+                        log.error("附表批量同步失败: formId={}, tableName={}, 批次大小={}",
+                                formId, tableName, chunk.size(), e);
+                    }
                 }
                 
                 // 更新ID游标到当前批次的最后一条记录ID（因为数据已按ID排序）
@@ -1141,8 +1353,7 @@ public class SyncService {
                 }
             }
             
-            // 刷新索引
-            esClient.indices().refresh(new RefreshRequest(indexName), RequestOptions.DEFAULT);
+            refreshIndexSafely(indexName);
             
             return successCount;
             

@@ -296,7 +296,17 @@
             border-radius: 4px;
             margin: 10px 0;
         }
-        
+
+        .user-info {
+            font-size: 14px;
+            color: #555;
+            margin-bottom: 10px;
+        }
+
+        .user-info strong {
+            color: #007bff;
+        }
+
         .success {
             background: #d4edda;
             color: #155724;
@@ -377,6 +387,7 @@
                     <input type="text" id="searchInput" class="search-input" placeholder="输入搜索关键词，如：台式电脑2">
                     <button class="search-btn" onclick="performSearch()">搜索</button>
                 </div>
+                <div id="userInfoNotice" class="user-info"></div>
                 
                 <div id="formFilters" class="form-filter-section">
                     <div class="form-filter-header">
@@ -460,7 +471,42 @@
         let currentEventSource = null;
         let availableSearchForms = [];
         const selectedSearchFormIds = new Set();
-        
+        let currentUserId = '';
+        const detailUrlConfig = { baseUrl: '' };
+        function setDetailBaseUrl(raw) {
+            if (!raw) {
+                return;
+            }
+            detailUrlConfig.baseUrl = raw.endsWith('/') ? raw.slice(0, -1) : raw;
+        }
+
+        function buildDetailUrl(formId, recordId, fallbackUrl) {
+            if (detailUrlConfig.baseUrl && formId && recordId && currentUserId && !String(formId).startsWith('excel:')) {
+                return `${detailUrlConfig.baseUrl}/${formId}/${recordId}/${currentUserId}`;
+            }
+            return fallbackUrl || null;
+        }
+
+        function escapeForSingleQuotes(value) {
+            return (value || '').replace(/'/g, "\\'");
+        }
+
+        function initializeUserContext() {
+            const params = new URLSearchParams(window.location.search || '');
+            currentUserId = params.get('user_id') || params.get('userId') || params.get('userid') || '';
+
+            const noticeEl = document.getElementById('userInfoNotice');
+            if (!noticeEl) {
+                return;
+            }
+
+            if (currentUserId) {
+                noticeEl.innerHTML = `当前用户: <strong>${currentUserId}</strong>`;
+            } else {
+                noticeEl.innerHTML = '<div class="error" style="margin: 0;">缺少用户ID，请通过带有user_id参数的链接访问本页面。</div>';
+            }
+        }
+
         // 切换标签页
         function switchTab(e, tabName) {
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
@@ -683,6 +729,10 @@
             if (!allCheckbox || allCheckbox.checked || selectedSearchFormIds.size === 0) {
                 return [];
             }
+            const totalForms = availableSearchForms.length;
+            if (totalForms > 0 && selectedSearchFormIds.size >= totalForms) {
+                return [];
+            }
             return Array.from(selectedSearchFormIds);
         }
 
@@ -699,12 +749,20 @@
             
             const resultsDiv = document.getElementById('searchResults');
             resultsDiv.innerHTML = '<div class="loading">搜索中...</div>';
+
+            if (!currentUserId) {
+                const message = '缺少用户ID，请通过带有user_id参数的链接访问后再执行搜索。';
+                resultsDiv.innerHTML = `<div class="error">${message}</div>`;
+                alert(message);
+                return;
+            }
             
             const formIds = getActiveFormIds();
             const payload = {
                 query: query,
                 size: pageSize,
-                from: page * pageSize
+                from: page * pageSize,
+                userId: currentUserId
             };
             if (formIds.length > 0) {
                 payload.formIds = formIds;
@@ -722,7 +780,9 @@
                 if (data.success) {
                     displayResults(data.data);
                 } else {
-                    resultsDiv.innerHTML = `<div class="error">搜索失败: ${data.message}</div>`;
+                    const extra = data.data && data.data.result ? data.data.result : '';
+                    const message = extra || data.message || '搜索失败';
+                    resultsDiv.innerHTML = `<div class="error">搜索失败: ${message}</div>`;
                 }
             })
             .catch(error => {
@@ -735,6 +795,7 @@
         function displayResults(data) {
             const resultsDiv = document.getElementById('searchResults');
             const paginationDiv = document.getElementById('pagination');
+            setDetailBaseUrl(data.detail_base_url);
             
             if (data.hits.length === 0) {
                 resultsDiv.innerHTML = '<div class="loading">没有找到相关结果</div>';
@@ -742,23 +803,28 @@
                 return;
             }
             
-            let html = `<h4>搜索结果 (共 ${data.total} 条)</h4>`;
+            const reviewNote = data.review_result ? `<div class="success">关键字审核: ${data.review_result}</div>` : '';
+            let html = `<h4>搜索结果 (共 ${data.total} 条)</h4>${reviewNote}`;
             
             data.hits.forEach(hit => {
                 const datasetLabel = hit.sourceType === 'excel' ? '所属Excel' : '所属表单';
                 const tableInfo = hit.sourceType === 'excel' && hit.tableName ? ` | 数据表: ${hit.tableName}` : '';
+                const detailUrl = buildDetailUrl(hit.formId, hit.recordId, hit.jumpUrl);
+                const escapedDetailUrl = escapeForSingleQuotes(detailUrl);
+                const detailLink = detailUrl ? `<a href="${detailUrl}" target="_blank" class="jump-link" title="打开详情页面">🔗</a>` : '';
+                const detailButton = detailUrl ? `<button class="jump-btn" onclick="openFormDetail('${escapedDetailUrl}')">查看详情</button>` : '';
                 html += `
                     <div class="result-item">
                         <div class="result-header">
                             <div class="result-title">
                                 ${getResultTitle(hit)}
-                                ${hit.jumpUrl ? `<a href="${hit.jumpUrl}" target="_blank" class="jump-link" title="打开详情页面">🔗</a>` : ''}
+                                ${detailLink}
                             </div>
                             <div class="result-score">匹配度: ${hit.score.toFixed(2)}</div>
                         </div>
                         <div class="result-meta">
                             ${datasetLabel}: ${hit.formName}${tableInfo}
-                            ${hit.jumpUrl ? `<button class="jump-btn" onclick="openFormDetail('${hit.jumpUrl}')">查看详情</button>` : ''}
+                            ${detailButton}
                         </div>
                         <div class="result-content">
                             ${formatRecordData(hit.data, hit.highlight)}
@@ -1346,6 +1412,8 @@
         
         // 页面加载时的处理
         document.addEventListener('DOMContentLoaded', function() {
+            initializeUserContext();
+
             // 绑定回车键搜索
             document.getElementById('searchInput').addEventListener('keypress', function(e) {
                 if (e.key === 'Enter') {

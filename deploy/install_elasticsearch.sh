@@ -227,6 +227,9 @@ indices.breaker.fielddata.limit: 60%
 indices.breaker.request.limit: 40%
 indices.breaker.total.limit: 95%
 
+http.max_initial_line_length: 32k
+http.max_header_size: 32k
+
 thread_pool.bulk.queue_size: 4000
 thread_pool.write.queue_size: 2000
 thread_pool.search.queue_size: 2000

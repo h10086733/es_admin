@@ -8,6 +8,9 @@ public class SearchRequest {
     
     @NotBlank(message = "搜索关键词不能为空")
     private String query;
+
+    @NotBlank(message = "用户ID不能为空")
+    private String userId;
     
     private List<String> formIds;
     
@@ -20,6 +23,9 @@ public class SearchRequest {
     // Getters and Setters
     public String getQuery() { return query; }
     public void setQuery(String query) { this.query = query; }
+
+    public String getUserId() { return userId; }
+    public void setUserId(String userId) { this.userId = userId; }
     
     public List<String> getFormIds() { return formIds; }
     public void setFormIds(List<String> formIds) { this.formIds = formIds; }

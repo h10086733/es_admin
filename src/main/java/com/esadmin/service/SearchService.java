@@ -10,7 +10,6 @@ import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.client.core.CountRequest;
 import org.elasticsearch.client.core.CountResponse;
-import org.elasticsearch.client.indices.GetIndexRequest;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.MultiMatchQueryBuilder;
@@ -26,6 +25,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 @Service
 public class SearchService {
@@ -34,16 +34,13 @@ public class SearchService {
     
     private final RestHighLevelClient esClient;
     private final FormService formService;
-    private final FormUrlService formUrlService;
     private final ExcelImportService excelImportService;
-    
+
     public SearchService(RestHighLevelClient esClient,
                          FormService formService,
-                         FormUrlService formUrlService,
                          ExcelImportService excelImportService) {
         this.esClient = esClient;
         this.formService = formService;
-        this.formUrlService = formUrlService;
         this.excelImportService = excelImportService;
     }
 
@@ -53,6 +50,13 @@ public class SearchService {
     @Value("${app.search.timeout:30}")
     private int timeout;
 
+    @Value("${app.search.detail-base-url:http://192.168.31.157/seeyon/rest/token/dataManage/openData}")
+    private String detailBaseUrl;
+
+    public String getDetailBaseUrl() {
+        return detailBaseUrl;
+    }
+
     public com.esadmin.dto.SearchResponse searchData(com.esadmin.dto.SearchRequest request) {
         long startTime = System.currentTimeMillis();
         
@@ -61,28 +65,65 @@ public class SearchService {
                 return createEmptyResponse();
             }
 
-            // 构建索引名称
-            String[] indices = buildIndices(request.getFormIds());
-            log.info("搜索使用的索引: {}", Arrays.toString(indices));
-            if (indices.length == 0) {
-                return createEmptyResponse();
-            }
+            FormIndexSelection indexSelection = prepareIndexSelection(request.getFormIds());
+            List<String> filterFormIds = indexSelection.filterFormIds();
+            log.info("搜索使用的索引: {}", Arrays.toString(indexSelection.indices()));
 
             // 构建搜索请求
-            SearchRequest searchRequest = new SearchRequest(indices);
-            SearchSourceBuilder sourceBuilder = buildSearchSource(request);
+            SearchRequest searchRequest;
+            if (indexSelection.indices().length == 0) {
+                searchRequest = new SearchRequest();
+            } else {
+                searchRequest = new SearchRequest(indexSelection.indices());
+            }
+            searchRequest.indicesOptions(IndicesOptions.lenientExpandOpen());
+
+            SearchSourceBuilder sourceBuilder = buildSearchSource(request, filterFormIds);
             searchRequest.source(sourceBuilder);
 
             // 执行搜索
             SearchResponse response = esClient.search(searchRequest, RequestOptions.DEFAULT);
             
             // 转换结果
-            return convertSearchResponse(response, startTime);
+            return convertSearchResponse(response, startTime, request.getUserId());
 
         } catch (Exception e) {
             log.error("搜索失败", e);
             return createErrorResponse(e.getMessage(), startTime);
         }
+    }
+
+    private FormIndexSelection prepareIndexSelection(List<String> formIds) {
+        final int maxExplicitIndices = 80;
+
+        if (formIds == null || formIds.isEmpty()) {
+            return FormIndexSelection.allIndices();
+        }
+
+        LinkedHashSet<String> normalizedIds = formIds.stream()
+                .filter(StringUtils::isNotBlank)
+                .map(String::trim)
+                .filter(StringUtils::isNotBlank)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        if (normalizedIds.isEmpty()) {
+            return FormIndexSelection.allIndices();
+        }
+
+        List<String> resolvedIndices = normalizedIds.stream()
+                .map(this::resolveIndexName)
+                .filter(StringUtils::isNotBlank)
+                .collect(Collectors.toList());
+
+        if (resolvedIndices.isEmpty()) {
+            return FormIndexSelection.allIndices();
+        }
+
+        if (resolvedIndices.size() > maxExplicitIndices) {
+            return FormIndexSelection.filteredAll(new ArrayList<>(normalizedIds));
+        }
+
+        return FormIndexSelection.explicit(resolvedIndices.toArray(new String[0]));
     }
 
     public List<Map<String, Object>> getFormDocumentStats() {
@@ -192,40 +233,6 @@ public class SearchService {
         return counts;
     }
 
-    private String[] buildIndices(List<String> formIds) {
-        try {
-            log.debug("构建搜索索引，输入formIds: {}", formIds);
-            
-            if (formIds != null && !formIds.isEmpty()) {
-                String[] resolvedIndices = formIds.stream()
-                        .map(this::resolveIndexName)
-                        .filter(StringUtils::isNotBlank)
-                        .filter(this::indexExists)
-                        .toArray(String[]::new);
-                
-                log.debug("解析后的有效索引: {}", Arrays.toString(resolvedIndices));
-                
-                if (resolvedIndices.length > 0) {
-                    return resolvedIndices;
-                }
-            }
-
-            // 只有当没有指定formIds或者解析后没有有效索引时，才搜索所有索引
-            log.debug("使用所有可用索引进行搜索");
-            Set<String> indices = new LinkedHashSet<>();
-            indices.addAll(fetchIndices("form_*"));
-            indices.addAll(fetchIndices("excel_*"));
-
-            String[] allIndices = indices.toArray(new String[0]);
-            log.debug("所有可用索引: {}", Arrays.toString(allIndices));
-            return allIndices;
-
-        } catch (Exception e) {
-            log.error("获取索引列表失败", e);
-            return new String[0];
-        }
-    }
-
     private String resolveIndexName(String datasetId) {
         if (StringUtils.isBlank(datasetId)) {
             return null;
@@ -237,7 +244,7 @@ public class SearchService {
         return "form_" + datasetId;
     }
 
-    private SearchSourceBuilder buildSearchSource(com.esadmin.dto.SearchRequest request) {
+    private SearchSourceBuilder buildSearchSource(com.esadmin.dto.SearchRequest request, List<String> filterFormIds) {
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
 
         // 构建查询
@@ -315,6 +322,11 @@ public class SearchService {
         }
         
         mainQuery.minimumShouldMatch(1);
+
+        if (filterFormIds != null && !filterFormIds.isEmpty()) {
+            mainQuery.filter(QueryBuilders.termsQuery("form_id", filterFormIds));
+        }
+
         sourceBuilder.query(mainQuery);
 
         // 高亮设置
@@ -341,7 +353,9 @@ public class SearchService {
         return sourceBuilder;
     }
 
-    private com.esadmin.dto.SearchResponse convertSearchResponse(org.elasticsearch.action.search.SearchResponse response, long startTime) {
+    private com.esadmin.dto.SearchResponse convertSearchResponse(org.elasticsearch.action.search.SearchResponse response,
+                                                                 long startTime,
+                                                                 String userId) {
         com.esadmin.dto.SearchResponse result = new com.esadmin.dto.SearchResponse();
         
         List<com.esadmin.dto.SearchResponse.SearchHit> hits = new ArrayList<>();
@@ -376,8 +390,8 @@ public class SearchService {
                         return "未知表单";
                     }
                 });
-                jumpUrl = formUrlService.generateFormUrl(cacheKey);
                 formId = cacheKey;
+                jumpUrl = buildOpenDataUrl(formId, recordId, userId);
             }
 
             Map<String, Object> displayData = extractDisplayData(source, sourceType);
@@ -412,6 +426,44 @@ public class SearchService {
         result.setTook(response.getTook().getMillis());
 
         return result;
+    }
+
+    private String buildOpenDataUrl(String formId, String recordId, String userId) {
+        if (StringUtils.isAnyBlank(detailBaseUrl, formId, recordId, userId)) {
+            return null;
+        }
+        String base = detailBaseUrl.endsWith("/") ? detailBaseUrl.substring(0, detailBaseUrl.length() - 1) : detailBaseUrl;
+        return String.format("%s/%s/%s/%s", base, formId, recordId, userId);
+    }
+
+    private static final class FormIndexSelection {
+        private final String[] indices;
+        private final List<String> filterFormIds;
+
+        private FormIndexSelection(String[] indices, List<String> filterFormIds) {
+            this.indices = indices;
+            this.filterFormIds = filterFormIds;
+        }
+
+        static FormIndexSelection allIndices() {
+            return new FormIndexSelection(new String[]{"form_*", "excel_*"}, Collections.emptyList());
+        }
+
+        static FormIndexSelection filteredAll(List<String> filterFormIds) {
+            return new FormIndexSelection(new String[]{"form_*", "excel_*"}, filterFormIds);
+        }
+
+        static FormIndexSelection explicit(String[] indices) {
+            return new FormIndexSelection(indices, Collections.emptyList());
+        }
+
+        String[] indices() {
+            return indices;
+        }
+
+        List<String> filterFormIds() {
+            return filterFormIds;
+        }
     }
 
     private Map<String, Object> extractDisplayData(Map<String, Object> source, String sourceType) {
@@ -480,30 +532,6 @@ public class SearchService {
             });
         }
         return highlight;
-    }
-
-    private List<String> fetchIndices(String pattern) {
-        try {
-            String[] indices = esClient.indices().get(new GetIndexRequest(pattern), RequestOptions.DEFAULT).getIndices();
-            return Arrays.asList(indices);
-        } catch (Exception e) {
-            log.debug("索引匹配为空: pattern={}, error={}", pattern, e.getMessage());
-            return Collections.emptyList();
-        }
-    }
-
-    private boolean indexExists(String indexName) {
-        if (StringUtils.isBlank(indexName)) {
-            return false;
-        }
-        try {
-            GetIndexRequest request = new GetIndexRequest(indexName);
-            request.indicesOptions(IndicesOptions.lenientExpandOpen());
-            return esClient.indices().exists(request, RequestOptions.DEFAULT);
-        } catch (Exception e) {
-            log.debug("检查索引是否存在失败: index={}, error={}", indexName, e.getMessage());
-            return false;
-        }
     }
 
     private String[] parseKeywords(String queryText) {

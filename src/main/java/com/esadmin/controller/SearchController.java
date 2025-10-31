@@ -2,6 +2,7 @@ package com.esadmin.controller;
 
 import com.esadmin.dto.SearchRequest;
 import com.esadmin.dto.SearchResponse;
+import com.esadmin.service.KeyReviewService;
 import com.esadmin.service.SearchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,17 +22,38 @@ import java.util.Map;
 public class SearchController {
 
     private static final Logger log = LoggerFactory.getLogger(SearchController.class);
-    
     private final SearchService searchService;
-    
-    public SearchController(SearchService searchService) {
+    private final KeyReviewService keyReviewService;
+
+    public SearchController(SearchService searchService, KeyReviewService keyReviewService) {
         this.searchService = searchService;
+        this.keyReviewService = keyReviewService;
     }
 
     @PostMapping("/search")
     public ResponseEntity<Map<String, Object>> search(@Valid @RequestBody SearchRequest request) {
         try {
-            log.info("执行搜索: query={}, size={}, from={}", request.getQuery(), request.getSize(), request.getFrom());
+            log.info("执行搜索: query={}, size={}, from={}, userId={}",
+                    request.getQuery(), request.getSize(), request.getFrom(), request.getUserId());
+
+            KeyReviewService.ReviewDecision decision =
+                    keyReviewService.reviewKeyword(request.getUserId(), request.getQuery());
+
+            if (!decision.isApproved()) {
+                log.info("关键字审核未通过: userId={}, reason={}", request.getUserId(), decision.getMessage());
+
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", false);
+                response.put("message", decision.getMessage());
+
+                Map<String, Object> data = new HashMap<>();
+                data.put("result", decision.getMessage());
+                response.put("data", data);
+
+                return ResponseEntity.ok(response);
+            }
+
+            String reviewMessage = decision.getMessage();
             
             SearchResponse result = searchService.searchData(request);
             
@@ -45,9 +67,11 @@ public class SearchController {
             data.put("max_score", result.getMaxScore() != null ? result.getMaxScore() : 0.0);
             data.put("size", request.getSize());
             data.put("from", request.getFrom());
-            
+            data.put("review_result", reviewMessage);
+            data.put("detail_base_url", searchService.getDetailBaseUrl());
+
             response.put("data", data);
-            
+
             return ResponseEntity.ok(response);
             
         } catch (Exception e) {
