@@ -68,6 +68,10 @@ check_jar() {
 
 # 检查Elasticsearch连接
 check_elasticsearch() {
+    source .env
+    echo "ES_USER='$ES_USER'"
+    echo "ES_PASSWORD='$ES_PASSWORD'"
+
     local es_host=${ES_HOST:-localhost:9200}
     print_message $YELLOW "检查Elasticsearch连接: $es_host"
     

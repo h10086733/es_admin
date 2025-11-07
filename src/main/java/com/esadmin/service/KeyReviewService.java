@@ -80,7 +80,7 @@ public class KeyReviewService {
             String result = StringUtils.defaultIfBlank(body.getData().getResult(), "审核失败");
             log.info("关键字审核结果: userId={}, result={}", userId, result);
 
-            if ("审核通过".equals(result)) {
+            if ("审核通过".equals(result)||"审核中".equals(result)) {
                 return ReviewDecision.approved(result);
             }
             return ReviewDecision.denied(result);

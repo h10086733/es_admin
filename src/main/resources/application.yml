@@ -12,6 +12,12 @@ spring:
   application:
     name: es-admin
   
+  # 文件上传配置
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+  
   # Web MVC配置 - 增加异步请求超时
   mvc:
     async:
