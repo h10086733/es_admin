@@ -10,6 +10,7 @@ public class FormDto {
     private Map<String, Object> viewInfo;
     private Map<String, Object> appbindInfo;
     private Map<String, Object> extensionsInfo;
+    private String reviewMode; // 审核模式：view_first(先看后审), review_first(先审后看)
     
     // Getters and Setters
     public String getId() { return id; }
@@ -29,6 +30,9 @@ public class FormDto {
     
     public Map<String, Object> getExtensionsInfo() { return extensionsInfo; }
     public void setExtensionsInfo(Map<String, Object> extensionsInfo) { this.extensionsInfo = extensionsInfo; }
+    
+    public String getReviewMode() { return reviewMode; }
+    public void setReviewMode(String reviewMode) { this.reviewMode = reviewMode; }
 }
 
 class FormFieldInfo {

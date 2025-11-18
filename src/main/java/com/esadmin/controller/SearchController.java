@@ -69,6 +69,12 @@ public class SearchController {
             data.put("from", request.getFrom());
             data.put("review_result", reviewMessage);
             data.put("detail_base_url", searchService.getDetailBaseUrl());
+            
+            // 添加过滤信息
+            if (result.getFilteredCount() != null && result.getFilteredCount() > 0) {
+                data.put("filteredCount", result.getFilteredCount());
+                data.put("filterMessage", result.getFilterMessage());
+            }
 
             response.put("data", data);
 
@@ -107,6 +113,28 @@ public class SearchController {
         }
     }
 
+    @PostMapping("/forms")
+    public ResponseEntity<Map<String, Object>> getSearchFormStats(@Valid @RequestBody SearchRequest request) {
+        try {
+            List<Map<String, Object>> forms = searchService.getSearchFormStats(request);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("data", forms);
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            log.error("获取搜索表单统计失败", e);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", e.getMessage());
+
+            return ResponseEntity.status(500).body(response);
+        }
+    }
+
     @GetMapping("/record/{formId}/{recordId}")
     public ResponseEntity<Map<String, Object>> getRecordDetail(
             @PathVariable String formId, 
@@ -125,6 +153,28 @@ public class SearchController {
             
         } catch (Exception e) {
             log.error("获取记录详情失败", e);
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            
+            return ResponseEntity.status(500).body(response);
+        }
+    }
+
+    @GetMapping("/admin/check/{userId}")
+    public ResponseEntity<Map<String, Object>> checkIfAdmin(@PathVariable String userId) {
+        try {
+            boolean isAdmin = searchService.checkIfAdmin(userId);
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("data", Map.of("isAdmin", isAdmin));
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            log.error("检查管理员权限失败: userId={}", userId, e);
             
             Map<String, Object> response = new HashMap<>();
             response.put("success", false);

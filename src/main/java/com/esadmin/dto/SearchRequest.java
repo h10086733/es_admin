@@ -20,6 +20,10 @@ public class SearchRequest {
     @PositiveOrZero(message = "from必须大于等于0") 
     private Integer from = 0;
     
+    private Boolean includeStats = false;
+    
+    private Boolean exactSearch = false;
+    
     // Getters and Setters
     public String getQuery() { return query; }
     public void setQuery(String query) { this.query = query; }
@@ -35,4 +39,10 @@ public class SearchRequest {
     
     public Integer getFrom() { return from; }
     public void setFrom(Integer from) { this.from = from; }
+    
+    public Boolean getIncludeStats() { return includeStats; }
+    public void setIncludeStats(Boolean includeStats) { this.includeStats = includeStats; }
+    
+    public Boolean getExactSearch() { return exactSearch; }
+    public void setExactSearch(Boolean exactSearch) { this.exactSearch = exactSearch; }
 }

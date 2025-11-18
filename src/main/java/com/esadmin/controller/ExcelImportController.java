@@ -55,6 +55,13 @@ public class ExcelImportController {
             log.warn("Excel导入参数错误: {}", e.getMessage());
             response.put("success", false);
             response.put("message", e.getMessage());
+            
+            // 检查是否是表名重复错误
+            if (e.getMessage().contains("表名重复")) {
+                response.put("error_type", "duplicate_table_name");
+                response.put("suggestion", "请修改自定义名称或开启覆盖模式");
+            }
+            
             return ResponseEntity.badRequest().body(response);
         } catch (IOException e) {
             log.error("读取Excel文件失败", e);
@@ -80,6 +87,29 @@ public class ExcelImportController {
         } catch (Exception e) {
             log.error("查询Excel导入记录失败", e);
             Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
+    }
+
+    @DeleteMapping("/{tableName}")
+    public ResponseEntity<Map<String, Object>> deleteImport(@PathVariable String tableName) {
+        Map<String, Object> response = new HashMap<>();
+        try {
+            excelImportService.deleteImport(tableName);
+            
+            response.put("success", true);
+            response.put("message", "删除成功");
+            return ResponseEntity.ok(response);
+            
+        } catch (IllegalArgumentException e) {
+            log.warn("Excel导入删除参数错误: {}", e.getMessage());
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(response);
+        } catch (Exception e) {
+            log.error("Excel导入删除失败", e);
             response.put("success", false);
             response.put("message", e.getMessage());
             return ResponseEntity.status(500).body(response);

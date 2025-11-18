@@ -17,6 +17,7 @@ public class ExcelImportMetadata {
     private int rowCount;
     private LocalDateTime importTime;
     private Map<String, String> columnLabels = new LinkedHashMap<>();
+    private String reviewMode; // 审核模式：view_first(先看后审), review_first(先审后看)
 
     public Long getId() {
         return id;
@@ -80,5 +81,13 @@ public class ExcelImportMetadata {
 
     public void setColumnLabels(Map<String, String> columnLabels) {
         this.columnLabels = columnLabels;
+    }
+    
+    public String getReviewMode() {
+        return reviewMode;
+    }
+    
+    public void setReviewMode(String reviewMode) {
+        this.reviewMode = reviewMode;
     }
 }

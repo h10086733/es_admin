@@ -10,6 +10,10 @@ public class SearchResponse {
     private double elapsedTime;
     private long took;
     private String error;
+    private List<Map<String, Object>> formStats;
+    private Integer filteredCount;
+    private String filterMessage;
+    private String reviewResult;
     
     // Getters and Setters
     public List<SearchHit> getHits() { return hits; }
@@ -29,6 +33,18 @@ public class SearchResponse {
     
     public String getError() { return error; }
     public void setError(String error) { this.error = error; }
+    
+    public List<Map<String, Object>> getFormStats() { return formStats; }
+    public void setFormStats(List<Map<String, Object>> formStats) { this.formStats = formStats; }
+    
+    public Integer getFilteredCount() { return filteredCount; }
+    public void setFilteredCount(Integer filteredCount) { this.filteredCount = filteredCount; }
+    
+    public String getFilterMessage() { return filterMessage; }
+    public void setFilterMessage(String filterMessage) { this.filterMessage = filterMessage; }
+    
+    public String getReviewResult() { return reviewResult; }
+    public void setReviewResult(String reviewResult) { this.reviewResult = reviewResult; }
     
     public static class SearchHit {
         private float score;
