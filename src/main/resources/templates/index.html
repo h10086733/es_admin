@@ -574,13 +574,13 @@
             const reviewTab = document.querySelector('.tab[onclick*="review"]');
             
             if (syncTab) {
-                syncTab.style.display = isAdminUser ? 'block' : 'none';
+                syncTab.style.display = isAdminUser ? '' : 'none';
             }
             if (excelTab) {
-                excelTab.style.display = isAdminUser ? 'block' : 'none';
+                excelTab.style.display = isAdminUser ? '' : 'none';
             }
             if (reviewTab) {
-                reviewTab.style.display = isAdminUser ? 'block' : 'none';
+                reviewTab.style.display = isAdminUser ? '' : 'none';
             }
             
             // 如果当前激活的标签页被隐藏了，切换到搜索标签页
