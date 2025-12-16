@@ -58,6 +58,21 @@ public class SearchController {
             
             SearchResponse result = searchService.searchData(request);
             
+            // 检查是否是权限被拒绝（total=0且有filterMessage包含权限关键词）
+            boolean isPermissionDenied = result.getTotal() == 0 
+                && StringUtils.isNotBlank(result.getFilterMessage())
+                && (result.getFilterMessage().contains("没有权限") 
+                    || result.getFilterMessage().contains("无权限")
+                    || result.getFilterMessage().contains("权限不足"));
+            
+            if (isPermissionDenied) {
+                // 权限被拒绝，返回失败响应
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", false);
+                response.put("message", result.getFilterMessage());
+                return ResponseEntity.ok(response);
+            }
+            
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
             
@@ -110,6 +125,16 @@ public class SearchController {
 
             return ResponseEntity.ok(response);
 
+        } catch (IllegalStateException e) {
+            // 权限异常，返回200状态码但success=false
+            log.warn("用户权限不足: {}", e.getMessage());
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            
+            return ResponseEntity.ok(response);
+            
         } catch (Exception e) {
             log.error("获取搜索表单列表失败", e);
 
@@ -183,6 +208,32 @@ public class SearchController {
             
         } catch (Exception e) {
             log.error("检查管理员权限失败: userId={}", userId, e);
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            
+            return ResponseEntity.status(500).body(response);
+        }
+    }
+
+    @GetMapping("/permission/check/{userId}")
+    public ResponseEntity<Map<String, Object>> checkUserPermission(@PathVariable String userId) {
+        try {
+            com.esadmin.service.AdminCheckService.AdminPermission permission = 
+                searchService.checkUserPermission(userId);
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            Map<String, Object> data = new HashMap<>();
+            data.put("isAdmin", permission.isAdmin());
+            data.put("isView", permission.isView());
+            response.put("data", data);
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            log.error("检查用户权限失败: userId={}", userId, e);
             
             Map<String, Object> response = new HashMap<>();
             response.put("success", false);

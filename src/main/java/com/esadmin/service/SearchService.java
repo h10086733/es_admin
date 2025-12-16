@@ -76,6 +76,12 @@ public class SearchService {
             return PermissionFilterResult.deny("缺少用户ID，无法校验部门权限");
         }
 
+        AdminCheckService.AdminPermission permission = adminCheckService.checkUserPermission(userIdStr);
+        if (!permission.isView()) {
+            log.warn("用户 {} 没有查看权限，isView=false", userIdStr);
+            return PermissionFilterResult.deny("您没有权限访问，请联系管理员");
+        }
+
         Long userId;
         try {
             userId = Long.valueOf(userIdStr);
@@ -269,24 +275,6 @@ public class SearchService {
         }
         return null;
     }
-    
-    /**
-     * 根据org_member表记录获取用户所属部门
-     */
-    private String getUserDepartmentId(Long userId) {
-        try {
-            String departmentId = memberService.getMemberDepartmentId(userId);
-            if (departmentId == null) {
-                log.warn("未找到用户 {} 的部门信息", userId);
-                return null;
-            }
-            log.debug("用户 {} 的部门ID: {}", userId, departmentId);
-            return departmentId;
-        } catch (Exception e) {
-            log.error("获取用户部门ID失败: userId=" + userId, e);
-            return null;
-        }
-    }
 
     @Value("${app.search.detail-base-url:http://192.168.31.157/seeyon/rest/token/dataManage/openData}")
     private String detailBaseUrl;
@@ -297,6 +285,10 @@ public class SearchService {
 
     public boolean checkIfAdmin(String userId) {
         return adminCheckService.checkIfAdmin(userId);
+    }
+
+    public AdminCheckService.AdminPermission checkUserPermission(String userId) {
+        return adminCheckService.checkUserPermission(userId);
     }
 
     public com.esadmin.dto.SearchResponse searchData(com.esadmin.dto.SearchRequest request) {
@@ -616,7 +608,8 @@ public class SearchService {
         try {
             PermissionFilterResult filterResult = filterDataSourcesByPermission(null, userIdStr);
             if (filterResult.isDenyAll()) {
-                return new ArrayList<>();
+                log.warn("用户 {} 权限被拒绝，原因: {}", userIdStr, filterResult.getMessage());
+                throw new IllegalStateException(filterResult.getMessage());
             }
 
             List<String> accessibleIds = filterResult.getAllowedIds();

@@ -27,6 +27,42 @@ public class ExcelImportController {
         this.excelImportService = excelImportService;
     }
 
+    @PostMapping(value = "/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Map<String, Object>> previewExcel(@RequestParam("file") MultipartFile file,
+                                                            @RequestParam(value = "sheetName", required = false) String sheetName,
+                                                            @RequestParam(value = "previewRows", defaultValue = "10") int previewRows) {
+        Map<String, Object> response = new HashMap<>();
+        try {
+            if (previewRows <= 0 || previewRows > 100) {
+                previewRows = 10;
+            }
+
+            Map<String, Object> previewResult = excelImportService.previewExcel(file, sheetName, previewRows);
+
+            response.put("success", true);
+            response.put("data", previewResult);
+            response.put("message", "预览成功");
+
+            return ResponseEntity.ok(response);
+
+        } catch (IllegalArgumentException e) {
+            log.warn("Excel预览参数错误: {}", e.getMessage());
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(response);
+        } catch (IOException e) {
+            log.error("读取Excel文件失败", e);
+            response.put("success", false);
+            response.put("message", "读取Excel文件失败: " + e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        } catch (Exception e) {
+            log.error("Excel预览失败", e);
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
+    }
+
     @PostMapping(value = "/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<Map<String, Object>> importExcel(@RequestParam("file") MultipartFile file,
                                                            @RequestParam(value = "name", required = false) String name,

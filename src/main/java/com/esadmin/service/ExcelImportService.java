@@ -74,6 +74,48 @@ public class ExcelImportService {
     }
 
     /**
+     * 预览Excel文件，返回前几行数据供用户确认
+     */
+    public Map<String, Object> previewExcel(MultipartFile file,
+                                           String requestedSheetName,
+                                           int previewRows) throws IOException {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("文件不能为空");
+        }
+
+        if (file.getSize() > MAX_FILE_SIZE) {
+            throw new IllegalArgumentException(String.format("文件大小超过限制，最大支持 %d MB", MAX_FILE_SIZE / 1024 / 1024));
+        }
+
+        ExcelParsedData parsedData = parseExcel(file, requestedSheetName);
+
+        int rowsToReturn = Math.min(previewRows, parsedData.getRows().size());
+        List<Map<String, String>> previewData = parsedData.getRows().subList(0, rowsToReturn);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("fileName", file.getOriginalFilename());
+        result.put("sheetName", parsedData.getSheetName());
+        result.put("displayName", parsedData.getDisplayName());
+        result.put("totalRows", parsedData.getRows().size());
+        result.put("previewRows", rowsToReturn);
+        result.put("columns", parsedData.getColumns().stream()
+                .map(col -> {
+                    Map<String, String> colInfo = new HashMap<>();
+                    colInfo.put("columnName", col.getColumnName());
+                    colInfo.put("header", col.getHeader());
+                    return colInfo;
+                })
+                .collect(java.util.stream.Collectors.toList()));
+        result.put("data", previewData);
+
+        log.info("Excel预览成功: file={}, sheet={}, totalRows={}, previewRows={}",
+                file.getOriginalFilename(), parsedData.getSheetName(),
+                parsedData.getRows().size(), rowsToReturn);
+
+        return result;
+    }
+
+    /**
      * 导入Excel文件并写入数据库与ES。
      */
     public ExcelImportResult importExcel(MultipartFile file,

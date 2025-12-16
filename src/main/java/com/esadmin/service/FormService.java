@@ -36,7 +36,10 @@ public class FormService {
     public List<FormDto> getAllForms() {
         try {
             List<FormDefinition> forms = formRepository.findByDeleteFlag(0);
-            return forms.stream().map(this::convertToDto).collect(java.util.stream.Collectors.toList());
+            return forms.stream()
+                    .map(this::convertToDto)
+                    .filter(form -> form != null && form.getName() != null && form.getName().startsWith("SGZB"))
+                    .collect(java.util.stream.Collectors.toList());
         } catch (Exception e) {
             log.warn("数据库连接失败，返回模拟数据: {}", e.getMessage());
             return createMockFormList();

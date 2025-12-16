@@ -108,9 +108,11 @@ public class AdminCheckService {
             }
 
             boolean isAdmin = Boolean.TRUE.equals(body.getData().getIsAdmin());
-            boolean isView = body.getData().getIsView() != null ? body.getData().getIsView() : true;
+            Boolean isViewObj = body.getData().getIsView();
+            boolean isView = isViewObj != null ? isViewObj : true;
             
-            log.info("用户权限检查结果: userId={}, isAdmin={}, isView={}", userId, isAdmin, isView);
+            log.info("用户权限检查结果: userId={}, isAdmin={}, isView={} (isViewObj={})", 
+                    userId, isAdmin, isView, isViewObj);
             
             return new AdminPermission(isAdmin, isView);
 
