@@ -16,6 +16,9 @@ print_message() {
     echo -e "${color}${message}${NC}"
 }
 
+# 允许通过环境变量覆盖的配置
+MAX_SHARDS_PER_NODE=${MAX_SHARDS_PER_NODE:-2000}
+
 
 # 检查操作系统
 check_os() {
@@ -210,6 +213,7 @@ http.port: 9200
 
 # 集群配置（单节点模式）
 discovery.type: single-node
+cluster.max_shards_per_node: ${MAX_SHARDS_PER_NODE}
 
 # 安全配置（适配ES 7.17.15）
 xpack.security.enabled: true
@@ -519,6 +523,7 @@ main() {
     print_message $YELLOW "=== 访问信息 ==="
     print_message $YELLOW "  地址: http://localhost:9200"
     print_message $YELLOW "  密码文件: /opt/elasticsearch/passwords.txt"
+    print_message $YELLOW "  每节点最大分片: ${MAX_SHARDS_PER_NODE} (运行脚本前可通过 export MAX_SHARDS_PER_NODE=值 覆盖)"
     print_message $YELLOW ""
     print_message $YELLOW "=== 环境变量 ==="
     print_message $YELLOW "如需手动运行ES命令，请先设置:"

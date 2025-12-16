@@ -76,6 +76,42 @@ public class MemberService {
         }
     }
 
+    public MemberDepartment info(Long memberId) {
+        if (memberId == null || memberId == 0) {
+            return null;
+        }
+
+        try {
+            return memberRepository.findById(memberId)
+                    .map(member -> new MemberDepartment(
+                            member.getOrgDepartmentId() != null ? String.valueOf(member.getOrgDepartmentId()) : null,
+                            member.getIsAdmin() != null && member.getIsAdmin() == 1
+                    ))
+                    .orElse(null);
+        } catch (Exception e) {
+            log.error("查询成员部门失败", e);
+            return null;
+        }
+    }
+
+    public static class MemberDepartment {
+        private final String departmentId;
+        private final boolean admin;
+
+        public MemberDepartment(String departmentId, boolean admin) {
+            this.departmentId = departmentId;
+            this.admin = admin;
+        }
+
+        public String getDepartmentId() {
+            return departmentId;
+        }
+
+        public boolean isAdmin() {
+            return admin;
+        }
+    }
+
     /**
      * 同步org_member表数据
      */

@@ -38,19 +38,25 @@ public class SearchService {
     private final ReviewPolicyService reviewPolicyService;
     private final KeyReviewService keyReviewService;
     private final AdminCheckService adminCheckService;
+    private final FormDepartmentPermissionServiceUltra departmentPermissionService;
+    private final MemberService memberService;
 
     public SearchService(RestHighLevelClient esClient,
                          FormService formService,
                          ExcelImportService excelImportService,
                          ReviewPolicyService reviewPolicyService,
                          KeyReviewService keyReviewService,
-                         AdminCheckService adminCheckService) {
+                         AdminCheckService adminCheckService,
+                         FormDepartmentPermissionServiceUltra departmentPermissionService,
+                         MemberService memberService) {
         this.esClient = esClient;
         this.formService = formService;
         this.excelImportService = excelImportService;
         this.reviewPolicyService = reviewPolicyService;
         this.keyReviewService = keyReviewService;
         this.adminCheckService = adminCheckService;
+        this.departmentPermissionService = departmentPermissionService;
+        this.memberService = memberService;
     }
 
     @Value("${app.search.max-size:100}")
@@ -58,6 +64,229 @@ public class SearchService {
 
     @Value("${app.search.timeout:30}")
     private int timeout;
+    
+    /**
+     * 根据用户部门权限过滤数据源ID列表
+     */
+    private static final String SUPER_DEPARTMENT_ID = "-1";
+
+    private PermissionFilterResult filterDataSourcesByPermission(List<String> requestedIds, String userIdStr) {
+        if (StringUtils.isBlank(userIdStr)) {
+            log.warn("用户ID为空，拒绝数据访问");
+            return PermissionFilterResult.deny("缺少用户ID，无法校验部门权限");
+        }
+
+        Long userId;
+        try {
+            userId = Long.valueOf(userIdStr);
+        } catch (NumberFormatException e) {
+            log.warn("用户ID格式无效: {}", userIdStr);
+            return PermissionFilterResult.deny("用户ID格式无效，无法校验部门权限");
+        }
+
+        try {
+            MemberService.MemberDepartment memberInfo = memberService.info(userId);
+            if (memberInfo == null) {
+                log.warn("未找到用户 {} 的部门信息，拒绝访问", userId);
+                return PermissionFilterResult.deny("未找到您的部门信息，请联系管理员配置组织关系");
+            }
+
+            if (memberInfo.isAdmin() || SUPER_DEPARTMENT_ID.equals(memberInfo.getDepartmentId())) {
+                List<String> accessible = collectAllDataSourceIds();
+                if (requestedIds != null && !requestedIds.isEmpty()) {
+                    accessible = new ArrayList<>(requestedIds);
+                }
+                log.info("用户 {} 为超级部门成员，允许访问 {} 个数据源", userId, accessible.size());
+                return PermissionFilterResult.allow(accessible, 0, null);
+            }
+
+            PermissionMatrix permissionMatrix = departmentPermissionService.buildPermissionMatrix(memberInfo.getDepartmentId());
+            List<ExcelImportMetadata> excelDatasets = safeLoadExcelDatasets();
+            Map<String, ExcelImportMetadata> excelIndexMap = buildExcelIndexMap(excelDatasets);
+            Map<String, ExcelImportMetadata> excelTableMap = buildExcelTableMap(excelDatasets);
+
+            if (requestedIds == null || requestedIds.isEmpty()) {
+                List<String> accessibleIds = new ArrayList<>();
+                List<FormDto> allForms = safeLoadForms();
+
+                for (FormDto form : allForms) {
+                    if (form == null || StringUtils.isBlank(form.getId())) {
+                        continue;
+                    }
+                    String key = buildSourceKey("form", form.getId());
+                    if (isSourceAccessible(permissionMatrix, key)) {
+                        accessibleIds.add(form.getId());
+                    }
+                }
+
+                for (ExcelImportMetadata excel : excelDatasets) {
+                    if (excel == null || StringUtils.isAnyBlank(excel.getTableName(), excel.getIndexName())) {
+                        continue;
+                    }
+                    String key = buildSourceKey("excel", excel.getTableName());
+                    if (isSourceAccessible(permissionMatrix, key)) {
+                        accessibleIds.add("excel:" + excel.getIndexName());
+                    }
+                }
+
+                if (accessibleIds.isEmpty()) {
+                    log.warn("用户 {} (部门{}) 没有可访问的数据源", userId, memberInfo.getDepartmentId());
+                    return PermissionFilterResult.deny("当前部门暂无可访问的数据源，请联系管理员开通权限");
+                }
+
+                log.info("用户 {} (部门{}) 有权限访问的数据源: {}", userId, memberInfo.getDepartmentId(), accessibleIds.size());
+                return PermissionFilterResult.allow(accessibleIds, 0, null);
+            }
+
+            List<String> filteredIds = new ArrayList<>();
+            int rejectedCount = 0;
+            for (String requestedId : requestedIds) {
+                if (StringUtils.isBlank(requestedId)) {
+                    continue;
+                }
+
+                boolean hasPermission;
+                if (requestedId.startsWith("excel:")) {
+                    String excelKey = requestedId.substring(6);
+                    String excelSourceId = resolveExcelSourceId(excelKey, excelIndexMap, excelTableMap);
+                    if (excelSourceId == null) {
+                        log.warn("未找到Excel数据源: {}", requestedId);
+                        rejectedCount++;
+                        continue;
+                    }
+                    String sourceKey = buildSourceKey("excel", excelSourceId);
+                    hasPermission = isSourceAccessible(permissionMatrix, sourceKey);
+                } else {
+                    ExcelImportMetadata excelMetadata = excelTableMap.get(requestedId.toUpperCase(Locale.ROOT));
+                    if (excelMetadata != null) {
+                        String sourceKey = buildSourceKey("excel", excelMetadata.getTableName());
+                        hasPermission = isSourceAccessible(permissionMatrix, sourceKey);
+                    } else {
+                        String sourceKey = buildSourceKey("form", requestedId);
+                        hasPermission = isSourceAccessible(permissionMatrix, sourceKey);
+                    }
+                }
+
+                if (hasPermission) {
+                    filteredIds.add(requestedId);
+                } else {
+                    rejectedCount++;
+                    log.info("用户 {} (部门{}) 无权限访问数据源: {}", userId, memberInfo.getDepartmentId(), requestedId);
+                }
+            }
+
+            if (filteredIds.isEmpty()) {
+                return PermissionFilterResult.deny("当前部门无权限访问所选数据源");
+            }
+
+            log.info("权限过滤结果: 请求{}个数据源，允许访问{}个", requestedIds.size(), filteredIds.size());
+            String message = rejectedCount > 0 ? String.format("有 %d 个数据源因部门权限被过滤", rejectedCount) : null;
+            return PermissionFilterResult.allow(filteredIds, rejectedCount, message);
+
+        } catch (Exception e) {
+            log.error("权限过滤失败，userId: {}", userId, e);
+            return PermissionFilterResult.deny("部门权限校验失败，请稍后重试");
+        }
+    }
+
+    private List<String> collectAllDataSourceIds() {
+        List<String> ids = new ArrayList<>();
+        safeLoadForms().stream()
+                .filter(Objects::nonNull)
+                .filter(form -> StringUtils.isNotBlank(form.getId()))
+                .forEach(form -> ids.add(form.getId()));
+
+        safeLoadExcelDatasets().stream()
+                .filter(Objects::nonNull)
+                .filter(excel -> StringUtils.isNotBlank(excel.getIndexName()))
+                .forEach(excel -> ids.add("excel:" + excel.getIndexName()));
+        return ids;
+    }
+
+    private List<ExcelImportMetadata> safeLoadExcelDatasets() {
+        try {
+            List<ExcelImportMetadata> datasets = excelImportService.listImports();
+            return datasets != null ? datasets : Collections.emptyList();
+        } catch (Exception e) {
+            log.error("加载Excel数据源失败", e);
+            return Collections.emptyList();
+        }
+    }
+
+    private List<FormDto> safeLoadForms() {
+        try {
+            List<FormDto> forms = formService.getAllForms();
+            return forms != null ? forms : Collections.emptyList();
+        } catch (Exception e) {
+            log.error("加载表单数据源失败", e);
+            return Collections.emptyList();
+        }
+    }
+
+    private Map<String, ExcelImportMetadata> buildExcelIndexMap(List<ExcelImportMetadata> datasets) {
+        if (datasets == null || datasets.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return datasets.stream()
+                .filter(Objects::nonNull)
+                .filter(meta -> StringUtils.isNotBlank(meta.getIndexName()))
+                .collect(Collectors.toMap(
+                        meta -> meta.getIndexName().toLowerCase(Locale.ROOT),
+                        meta -> meta,
+                        (existing, replacement) -> existing,
+                        LinkedHashMap::new
+                ));
+    }
+
+    private Map<String, ExcelImportMetadata> buildExcelTableMap(List<ExcelImportMetadata> datasets) {
+        if (datasets == null || datasets.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return datasets.stream()
+                .filter(Objects::nonNull)
+                .filter(meta -> StringUtils.isNotBlank(meta.getTableName()))
+                .collect(Collectors.toMap(
+                        meta -> meta.getTableName().toUpperCase(Locale.ROOT),
+                        meta -> meta,
+                        (existing, replacement) -> existing,
+                        LinkedHashMap::new
+                ));
+    }
+
+    private String resolveExcelSourceId(String excelKey,
+                                        Map<String, ExcelImportMetadata> excelIndexMap,
+                                        Map<String, ExcelImportMetadata> excelTableMap) {
+        if (StringUtils.isBlank(excelKey)) {
+            return null;
+        }
+        ExcelImportMetadata byIndex = excelIndexMap.get(excelKey.toLowerCase(Locale.ROOT));
+        if (byIndex != null && StringUtils.isNotBlank(byIndex.getTableName())) {
+            return byIndex.getTableName();
+        }
+        ExcelImportMetadata byTable = excelTableMap.get(excelKey.toUpperCase(Locale.ROOT));
+        if (byTable != null && StringUtils.isNotBlank(byTable.getTableName())) {
+            return byTable.getTableName();
+        }
+        return null;
+    }
+    
+    /**
+     * 根据org_member表记录获取用户所属部门
+     */
+    private String getUserDepartmentId(Long userId) {
+        try {
+            String departmentId = memberService.getMemberDepartmentId(userId);
+            if (departmentId == null) {
+                log.warn("未找到用户 {} 的部门信息", userId);
+                return null;
+            }
+            log.debug("用户 {} 的部门ID: {}", userId, departmentId);
+            return departmentId;
+        } catch (Exception e) {
+            log.error("获取用户部门ID失败: userId=" + userId, e);
+            return null;
+        }
+    }
 
     @Value("${app.search.detail-base-url:http://192.168.31.157/seeyon/rest/token/dataManage/openData}")
     private String detailBaseUrl;
@@ -78,7 +307,15 @@ public class SearchService {
                 return createEmptyResponse();
             }
 
-            FormIndexSelection indexSelection = prepareIndexSelection(request.getFormIds());
+            PermissionFilterResult filterResult = filterDataSourcesByPermission(request.getFormIds(), request.getUserId());
+            if (filterResult.isDenyAll()) {
+                return createPermissionDeniedResponse(filterResult.getMessage());
+            }
+
+            List<String> filteredFormIds = filterResult.getAllowedIds();
+            log.info("权限过滤后的数据源数量: {}", filteredFormIds.size());
+            
+            FormIndexSelection indexSelection = prepareIndexSelection(filteredFormIds);
             List<String> filterFormIds = indexSelection.filterFormIds();
             log.info("搜索使用的索引: {}", Arrays.toString(indexSelection.indices()));
 
@@ -111,7 +348,16 @@ public class SearchService {
             SearchResponse response = esClient.search(searchRequest, RequestOptions.DEFAULT);
             
             // 转换结果并应用审核策略过滤，传入统计信息
-            return convertSearchResponseWithReviewFilter(response, startTime, request.getUserId(), request.getQuery(), filterStats);
+            com.esadmin.dto.SearchResponse finalResponse = convertSearchResponseWithReviewFilter(response, startTime, request.getUserId(), request.getQuery(), filterStats);
+
+            if (filterResult.getFilteredOutCount() != null && filterResult.getFilteredOutCount() > 0) {
+                finalResponse.setFilteredCount(filterResult.getFilteredOutCount());
+                String message = StringUtils.defaultIfBlank(filterResult.getMessage(),
+                        String.format("有 %d 个数据源因部门权限被过滤", filterResult.getFilteredOutCount()));
+                finalResponse.setFilterMessage(message);
+            }
+
+            return finalResponse;
 
         } catch (Exception e) {
             log.error("搜索失败", e);
@@ -122,10 +368,17 @@ public class SearchService {
     public List<Map<String, Object>> getSearchFormStats(com.esadmin.dto.SearchRequest request) {
         try {
             if (request.getQuery() == null || request.getQuery().trim().isEmpty()) {
-                return getFormDocumentStats();
+                return getFormDocumentStatsWithPermission(request.getUserId());
             }
 
-            FormIndexSelection indexSelection = prepareIndexSelection(request.getFormIds());
+            PermissionFilterResult filterResult = filterDataSourcesByPermission(request.getFormIds(), request.getUserId());
+            if (filterResult.isDenyAll()) {
+                return new ArrayList<>();
+            }
+
+            List<String> filteredFormIds = filterResult.getAllowedIds();
+            
+            FormIndexSelection indexSelection = prepareIndexSelection(filteredFormIds);
             List<String> filterFormIds = indexSelection.filterFormIds();
 
             // 构建聚合查询来统计每个数据源的结果数量
@@ -354,6 +607,99 @@ public class SearchService {
         }
 
         return FormIndexSelection.explicit(resolvedIndices.toArray(new String[0]));
+    }
+
+    /**
+     * 获取有权限访问的数据源文档统计
+     */
+    public List<Map<String, Object>> getFormDocumentStatsWithPermission(String userIdStr) {
+        try {
+            PermissionFilterResult filterResult = filterDataSourcesByPermission(null, userIdStr);
+            if (filterResult.isDenyAll()) {
+                return new ArrayList<>();
+            }
+
+            List<String> accessibleIds = filterResult.getAllowedIds();
+            
+            List<FormDto> forms = formService.getAllForms();
+            List<ExcelImportMetadata> excelDatasets = excelImportService.listImports();
+
+            Map<String, String> datasetIndexMap = new LinkedHashMap<>();
+            
+            // 只添加有权限访问的表单
+            if (forms != null) {
+                forms.stream()
+                        .filter(Objects::nonNull)
+                        .filter(form -> StringUtils.isNotBlank(form.getId()))
+                        .filter(form -> accessibleIds.contains(form.getId())) // 权限过滤
+                        .forEach(form -> datasetIndexMap.put(form.getId(), "form_" + form.getId()));
+            }
+            
+            // 只添加有权限访问的Excel数据源
+            if (excelDatasets != null) {
+                excelDatasets.stream()
+                        .filter(Objects::nonNull)
+                        .filter(dataset -> StringUtils.isNotBlank(dataset.getIndexName()))
+                        .filter(dataset -> accessibleIds.contains("excel:" + dataset.getIndexName())) // 权限过滤
+                        .forEach(dataset -> datasetIndexMap.put("excel:" + dataset.getIndexName(), dataset.getIndexName()));
+            }
+
+            Map<String, Long> docCounts = fetchDocCounts(datasetIndexMap);
+
+            List<Map<String, Object>> result = new ArrayList<>();
+            
+            // 处理表单结果
+            if (forms != null) {
+                for (FormDto form : forms) {
+                    if (form == null || StringUtils.isBlank(form.getId()) || 
+                        !accessibleIds.contains(form.getId())) { // 权限检查
+                        continue;
+                    }
+
+                    Long count = docCounts.get(form.getId());
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("id", form.getId());
+                    item.put("type", "form");
+                    item.put("name", StringUtils.defaultIfBlank(form.getName(), "未命名表单"));
+                    item.put("count", count != null ? count : 0L);
+                    item.put("index", "form_" + form.getId());
+                    result.add(item);
+                }
+            }
+
+            // 处理Excel结果
+            if (excelDatasets != null) {
+                for (ExcelImportMetadata dataset : excelDatasets) {
+                    if (dataset == null || StringUtils.isBlank(dataset.getIndexName()) ||
+                        !accessibleIds.contains("excel:" + dataset.getIndexName())) { // 权限检查
+                        continue;
+                    }
+
+                    Long count = docCounts.get("excel:" + dataset.getIndexName());
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("id", "excel:" + dataset.getIndexName());
+                    item.put("type", "excel");
+                    item.put("name", StringUtils.defaultIfBlank(dataset.getDisplayName(), dataset.getIndexName()));
+                    item.put("count", count != null ? count : 0L);
+                    item.put("index", dataset.getIndexName());
+                    result.add(item);
+                }
+            }
+
+            // 按文档数量排序
+            result.sort((a, b) -> {
+                Long countA = (Long) a.get("count");
+                Long countB = (Long) b.get("count");
+                return Long.compare(countB != null ? countB : 0L, countA != null ? countA : 0L);
+            });
+
+            log.info("权限过滤后返回 {} 个数据源统计", result.size());
+            return result;
+
+        } catch (Exception e) {
+            log.error("获取权限过滤后的表单文档统计失败", e);
+            return new ArrayList<>();
+        }
     }
 
     public List<Map<String, Object>> getFormDocumentStats() {
@@ -902,6 +1248,45 @@ public class SearchService {
         return String.format("%s/%s/%s/%s", base, formId, recordId, userId);
     }
 
+    private static final class PermissionFilterResult {
+        private final List<String> allowedIds;
+        private final boolean denyAll;
+        private final String message;
+        private final Integer filteredOutCount;
+
+        private PermissionFilterResult(List<String> allowedIds, boolean denyAll, String message, Integer filteredOutCount) {
+            this.allowedIds = allowedIds != null ? allowedIds : Collections.emptyList();
+            this.denyAll = denyAll;
+            this.message = message;
+            this.filteredOutCount = filteredOutCount;
+        }
+
+        static PermissionFilterResult allow(List<String> allowedIds, int filteredOutCount, String message) {
+            Integer count = filteredOutCount > 0 ? filteredOutCount : null;
+            return new PermissionFilterResult(allowedIds, false, message, count);
+        }
+
+        static PermissionFilterResult deny(String message) {
+            return new PermissionFilterResult(Collections.emptyList(), true, message, null);
+        }
+
+        List<String> getAllowedIds() {
+            return allowedIds;
+        }
+
+        boolean isDenyAll() {
+            return denyAll;
+        }
+
+        String getMessage() {
+            return message;
+        }
+
+        Integer getFilteredOutCount() {
+            return filteredOutCount;
+        }
+    }
+
     private static final class FormIndexSelection {
         private final String[] indices;
         private final List<String> filterFormIds;
@@ -1023,6 +1408,27 @@ public class SearchService {
         response.setHits(new ArrayList<>());
         response.setTotal(0);
         return response;
+    }
+
+    private com.esadmin.dto.SearchResponse createPermissionDeniedResponse(String message) {
+        com.esadmin.dto.SearchResponse response = createEmptyResponse();
+        response.setFilterMessage(StringUtils.defaultIfBlank(message, "当前部门暂无可访问的数据源，请联系管理员配置权限"));
+        response.setFilteredCount(0);
+        return response;
+    }
+
+    private boolean isSourceAccessible(PermissionMatrix matrix, String sourceKey) {
+        if (matrix == null) {
+            return true;
+        }
+        if (!matrix.isRestricted(sourceKey)) {
+            return true;
+        }
+        return matrix.isAllowed(sourceKey);
+    }
+
+    private String buildSourceKey(String sourceType, String sourceId) {
+        return (sourceType != null ? sourceType : "") + ":" + (sourceId != null ? sourceId : "");
     }
 
     private com.esadmin.dto.SearchResponse createErrorResponse(String error, long startTime) {

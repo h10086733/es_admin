@@ -4,6 +4,7 @@ import com.esadmin.dto.SearchRequest;
 import com.esadmin.dto.SearchResponse;
 import com.esadmin.service.KeyReviewService;
 import com.esadmin.service.SearchService;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -73,6 +74,8 @@ public class SearchController {
             // 添加过滤信息
             if (result.getFilteredCount() != null && result.getFilteredCount() > 0) {
                 data.put("filteredCount", result.getFilteredCount());
+            }
+            if (StringUtils.isNotBlank(result.getFilterMessage())) {
                 data.put("filterMessage", result.getFilterMessage());
             }
 
@@ -92,9 +95,14 @@ public class SearchController {
     }
 
     @GetMapping("/forms")
-    public ResponseEntity<Map<String, Object>> getSearchForms() {
+    public ResponseEntity<Map<String, Object>> getSearchForms(@RequestParam(value = "userId", required = false) String userId) {
         try {
-            List<Map<String, Object>> forms = searchService.getFormDocumentStats();
+            List<Map<String, Object>> forms;
+            if (StringUtils.isNotBlank(userId)) {
+                forms = searchService.getFormDocumentStatsWithPermission(userId);
+            } else {
+                forms = searchService.getFormDocumentStats();
+            }
 
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);

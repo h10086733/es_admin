@@ -323,7 +323,7 @@
             border-radius: 4px;
             margin: 10px 0;
         }
-        
+
         .pagination {
             display: flex;
             justify-content: center;
@@ -359,6 +359,54 @@
         .jump-link:hover {
             color: #0056b3;
         }
+
+        .dept-tree {
+            list-style: none;
+            padding-left: 12px;
+            margin: 4px 0;
+        }
+
+        .dept-tree ul {
+            list-style: none;
+            padding-left: 16px;
+            margin: 2px 0;
+        }
+
+        .dept-tree label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 0;
+            font-size: 14px;
+        }
+
+        .dept-tree input[type="checkbox"] {
+            margin: 0;
+        }
+
+        .dept-node {
+            position: relative;
+        }
+
+        .dept-toggle {
+            width: 16px;
+            height: 16px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            color: #007bff;
+            padding: 0;
+            font-size: 14px;
+            margin-right: 4px;
+        }
+
+        .dept-toggle:focus {
+            outline: none;
+        }
+
+        .dept-node.collapsed > ul {
+            display: none;
+        }
         
         .jump-btn {
             background: #007bff;
@@ -372,6 +420,145 @@
         
         .jump-btn:hover {
             background: #0056b3;
+        }
+
+        .permission-item {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .permission-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .permission-form-name {
+            font-weight: bold;
+            font-size: 16px;
+            color: #333;
+        }
+        
+        .permission-status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .permission-status.all-access {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .permission-status.restricted {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .department-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 10px 0;
+        }
+        
+        .department-tag {
+            background: #e6f0ff;
+            color: #2254b3;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        
+        .permission-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+        
+        .modal-content {
+            background-color: #fefefe;
+            margin: 5% auto;
+            padding: 20px;
+            border-radius: 8px;
+            width: 70%;
+            max-width: 800px;
+            max-height: 80%;
+            overflow-y: auto;
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #aaa;
+        }
+        
+        .modal-close:hover {
+            color: #000;
+        }
+        
+        .department-selector {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        
+        .department-option {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            margin: 4px 0;
+            border-radius: 4px;
+        }
+        
+        .department-option:hover {
+            background: #f8f9fa;
+        }
+        
+        .department-option input[type="checkbox"] {
+            margin-right: 8px;
+        }
+        
+        .permission-mode-selector {
+            margin: 15px 0;
+        }
+        
+        .permission-mode-selector label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 8px 0;
+            font-size: 14px;
         }
     </style>
 </head>
@@ -387,6 +574,7 @@
             <div class="tab" onclick="switchTab(event, 'sync')">数据同步</div>
             <div class="tab" onclick="switchTab(event, 'excel')">Excel/CSV导入</div>
             <div class="tab" onclick="switchTab(event, 'review')">审核策略维护</div>
+            <div class="tab" onclick="switchTab(event, 'permission')">部门权限管理</div>
         </div>
         
         <!-- 搜索标签页 -->
@@ -499,6 +687,65 @@
                 <div id="reviewPoliciesList" class="forms-list"></div>
             </div>
         </div>
+
+        <!-- 部门权限管理标签页 -->
+        <div id="permission-tab" class="tab-content">
+            <div class="sync-section">
+                <h3>部门权限管理</h3>
+                <div style="margin-bottom: 20px;">
+                    <div class="search-box">
+                        <input type="text" id="permissionSearchInput" class="search-input" placeholder="搜索表单名称...">
+                        <button class="search-btn" onclick="searchFormPermissions()">搜索</button>
+                        <button class="sync-btn" onclick="loadFormPermissions()" style="margin-left: 10px;">刷新列表</button>
+                    </div>
+                </div>
+                
+                <div id="formPermissionsList" class="forms-list"></div>
+            </div>
+        </div>
+
+        <!-- 部门权限配置模态框 -->
+        <div id="permissionModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="modalTitle">配置表单部门权限</h3>
+                    <button class="modal-close" onclick="closePermissionModal()">&times;</button>
+                </div>
+                <div>
+                    <div style="margin-bottom: 15px;">
+                        <strong>表单：</strong><span id="modalFormName"></span>
+                    </div>
+                    
+                    <div class="permission-mode-selector">
+                        <h4 style="margin-bottom: 10px;">访问权限模式：</h4>
+                        <label>
+                            <input type="radio" name="accessMode" value="all" checked onchange="toggleAccessMode()">
+                            所有部门都可以访问（默认）
+                        </label>
+                        <label>
+                            <input type="radio" name="accessMode" value="restricted" onchange="toggleAccessMode()">
+                            仅指定部门可以访问
+                        </label>
+                    </div>
+                    
+                    <div id="departmentSelection" style="display: none;">
+                        <h4 style="margin: 15px 0 10px 0;">选择可访问的部门：</h4>
+                        <div style="margin-bottom: 10px;">
+                            <button class="btn-small btn-primary" onclick="selectAllDepartments()">全选</button>
+                            <button class="btn-small" onclick="clearDepartmentSelection()" style="background: #6c757d; color: white;">清空</button>
+                        </div>
+                        <div class="department-selector" id="departmentSelector">
+                            <div class="loading">加载部门列表...</div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
+                        <button class="btn-small" onclick="closePermissionModal()" style="background: #6c757d; color: white;">取消</button>
+                        <button class="btn-small btn-success" onclick="savePermissionConfig()">保存</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -572,6 +819,7 @@
             const syncTab = document.querySelector('.tab[onclick*="sync"]');
             const excelTab = document.querySelector('.tab[onclick*="excel"]');
             const reviewTab = document.querySelector('.tab[onclick*="review"]');
+            const permissionTab = document.querySelector('.tab[onclick*="permission"]');
             
             if (syncTab) {
                 syncTab.style.display = isAdminUser ? '' : 'none';
@@ -582,13 +830,17 @@
             if (reviewTab) {
                 reviewTab.style.display = isAdminUser ? '' : 'none';
             }
+            if (permissionTab) {
+                permissionTab.style.display = isAdminUser ? '' : 'none';
+            }
             
             // 如果当前激活的标签页被隐藏了，切换到搜索标签页
             const activeTab = document.querySelector('.tab.active');
             if (activeTab && !isAdminUser && (
                 activeTab.onclick.toString().includes('sync') || 
                 activeTab.onclick.toString().includes('excel') ||
-                activeTab.onclick.toString().includes('review')
+                activeTab.onclick.toString().includes('review') ||
+                activeTab.onclick.toString().includes('permission')
             )) {
                 // 切换到搜索标签页
                 switchTab(null, 'search');
@@ -619,6 +871,8 @@
                 loadExcelImports();
             } else if (tabName === 'review') {
                 loadReviewPolicies();
+            } else if (tabName === 'permission') {
+                loadFormPermissions();
             }
         }
 
@@ -634,7 +888,12 @@
                 summarySpan.textContent = '';
             }
 
-            fetch('/api/search/forms')
+            const params = new URLSearchParams();
+            if (currentUserId) {
+                params.set('userId', currentUserId);
+            }
+
+            fetch('/api/search/forms' + (params.toString() ? `?${params.toString()}` : ''))
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
@@ -1870,6 +2129,422 @@
             if (event.target.classList.contains('review-item-checkbox')) {
                 updateReviewSelectAllState();
             }
+            if (event.target.classList.contains('dept-checkbox')) {
+                cascadeSelectChildren(event.target.value, event.target.checked);
+            }
+        });
+
+        document.addEventListener('click', function(event) {
+            if (event.target.classList.contains('dept-toggle')) {
+                const nodeId = event.target.dataset.nodeId;
+                const node = document.querySelector(`.dept-node[data-node-id="${nodeId}"]`);
+                if (node) {
+                    node.classList.toggle('collapsed');
+                    event.target.textContent = node.classList.contains('collapsed') ? '+' : '-';
+                }
+            }
+        });
+
+        // 部门权限管理功能
+        let allDepartments = [];
+        let allFormPermissions = [];
+        let currentEditingForm = null;
+
+        function loadFormPermissions() {
+            const listDiv = document.getElementById('formPermissionsList');
+            if (!listDiv) {
+                return;
+            }
+            
+            listDiv.innerHTML = '<div class="loading">加载权限配置...</div>';
+            
+            fetch('/api/form-department-permission/list')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        allFormPermissions = data.data || [];
+                        renderFormPermissions(allFormPermissions);
+                    } else {
+                        listDiv.innerHTML = `<div class="error">加载权限配置失败: ${data.message}</div>`;
+                    }
+                })
+                .catch(error => {
+                    console.error('Load permissions error', error);
+                    listDiv.innerHTML = `<div class="error">加载权限配置失败: ${error.message}</div>`;
+                });
+        }
+
+        function renderFormPermissions(permissions) {
+            const listDiv = document.getElementById('formPermissionsList');
+            if (!listDiv) {
+                return;
+            }
+            
+            if (!permissions || permissions.length === 0) {
+                listDiv.innerHTML = '<div class="loading">暂无权限配置</div>';
+                return;
+            }
+            
+            let html = '';
+            permissions.forEach(permission => {
+                const statusClass = permission.allowAllDepartments ? 'all-access' : 'restricted';
+                const statusText = permission.allowAllDepartments ? '所有部门可访问' : '限制部门访问';
+                const departmentCount = permission.departments ? permission.departments.length : 0;
+                const updateTime = permission.updateTime ? formatDateTime(permission.updateTime) : '未设置';
+                const sourceTypeLabel = permission.sourceType === 'excel' ? 'Excel' : '表单';
+                const sourceTypeClass = permission.sourceType === 'excel' ? 'form-filter-badge' : 'form-filter-badge';
+                const sourceBadgeStyle = permission.sourceType === 'excel' ? 'background: #fff3cd; color: #8a6200;' : 'background: #e6f0ff; color: #2254b3;';
+                
+                html += `
+                    <div class="permission-item">
+                        <div class="permission-header">
+                            <div class="permission-form-name">
+                                <span class="${sourceTypeClass}" style="${sourceBadgeStyle}">${sourceTypeLabel}</span>
+                                ${permission.sourceName || '未命名数据源'}
+                            </div>
+                            <div class="permission-status ${statusClass}">${statusText}</div>
+                        </div>
+                        <div style="margin-bottom: 10px;">
+                            <span style="color: #666; font-size: 14px;">数据源ID: ${permission.sourceId}</span>
+                            ${permission.updateTime ? ` | 最后更新: ${updateTime}` : ''}
+                        </div>
+                        ${permission.allowAllDepartments ? 
+                            '<div style="color: #666; margin: 10px 0;">默认所有部门都可以访问此数据源</div>' :
+                            `<div>
+                                <div style="margin: 10px 0; color: #666;">可访问部门 (${departmentCount}个):</div>
+                                <div class="department-list">
+                                    ${permission.departments.map(dept => 
+                                        `<span class="department-tag">${dept.departmentName}</span>`
+                                    ).join('')}
+                                </div>
+                            </div>`
+                        }
+                        <div class="permission-actions">
+                            <button class="btn-small btn-primary" onclick="editSourcePermission('${permission.sourceType}', '${permission.sourceId}', '${permission.sourceName}')">编辑权限</button>
+                            ${!permission.allowAllDepartments ? 
+                                `<button class="btn-small btn-danger" onclick="removeSourcePermission('${permission.sourceType}', '${permission.sourceId}', '${permission.sourceName}')">移除限制</button>` : 
+                                ''
+                            }
+                        </div>
+                    </div>
+                `;
+            });
+            
+            listDiv.innerHTML = html;
+        }
+
+        function searchFormPermissions() {
+            const searchInput = document.getElementById('permissionSearchInput');
+            const keyword = searchInput ? searchInput.value.trim() : '';
+            
+            if (!keyword) {
+                renderFormPermissions(allFormPermissions);
+                return;
+            }
+            
+            const filtered = allFormPermissions.filter(permission => 
+                (permission.sourceName && permission.sourceName.toLowerCase().includes(keyword.toLowerCase())) ||
+                (permission.departments && permission.departments.some(dept => 
+                    dept.departmentName.toLowerCase().includes(keyword.toLowerCase())
+                ))
+            );
+            
+            renderFormPermissions(filtered);
+        }
+
+        function editSourcePermission(sourceType, sourceId, sourceName) {
+            currentEditingForm = { type: sourceType, id: sourceId, name: sourceName };
+            document.getElementById('modalFormName').textContent = sourceName;
+            
+            // 加载当前权限配置
+            fetch(`/api/form-department-permission/source/${sourceType}/${encodeURIComponent(sourceId)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const permission = data.data;
+                        
+                        // 设置访问模式
+                        const allModeRadio = document.querySelector('input[name="accessMode"][value="all"]');
+                        const restrictedModeRadio = document.querySelector('input[name="accessMode"][value="restricted"]');
+                        
+                        if (permission.allowAllDepartments) {
+                            allModeRadio.checked = true;
+                            restrictedModeRadio.checked = false;
+                        } else {
+                            allModeRadio.checked = false;
+                            restrictedModeRadio.checked = true;
+                        }
+                        
+                        toggleAccessMode();
+                        
+                        // 如果是限制模式，设置选中的部门
+                        if (!permission.allowAllDepartments) {
+                            setTimeout(() => {
+                                const selectedDeptIds = permission.departments.map(d => d.departmentId);
+                                setSelectedDepartments(selectedDeptIds);
+                            }, 100);
+                        }
+                        
+                        // 显示模态框
+                        document.getElementById('permissionModal').style.display = 'block';
+                    } else {
+                        alert('获取权限配置失败: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Get source permission error', error);
+                    alert('获取权限配置失败: ' + error.message);
+                });
+        }
+
+        function removeSourcePermission(sourceType, sourceId, sourceName) {
+            const sourceLabel = sourceType === 'excel' ? 'Excel数据源' : '表单';
+            if (!confirm(`确定要移除${sourceLabel}"${sourceName}"的访问限制吗？\n\n移除后，所有部门都可以访问此数据源。`)) {
+                return;
+            }
+            
+            fetch(`/api/form-department-permission/source/${sourceType}/${encodeURIComponent(sourceId)}`, {
+                method: 'DELETE'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('移除成功');
+                    loadFormPermissions();
+                } else {
+                    alert('移除失败: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Remove source permission error', error);
+                alert('移除失败: ' + error.message);
+            });
+        }
+
+        function toggleAccessMode() {
+            const restrictedMode = document.querySelector('input[name="accessMode"][value="restricted"]').checked;
+            const departmentSelection = document.getElementById('departmentSelection');
+            
+            if (restrictedMode) {
+                departmentSelection.style.display = 'block';
+                loadDepartmentsForModal();
+            } else {
+                departmentSelection.style.display = 'none';
+            }
+        }
+
+        let departmentTreeData = [];
+        const deptChildrenMap = new Map();
+        let allDepartmentIds = [];
+
+        function buildDepartmentMaps(nodes, parentId = null) {
+            nodes.forEach(node => {
+                if (!deptChildrenMap.has(node.id)) {
+                    deptChildrenMap.set(node.id, []);
+                }
+                allDepartmentIds.push(node.id);
+                if (parentId) {
+                    if (!deptChildrenMap.has(parentId)) {
+                        deptChildrenMap.set(parentId, []);
+                    }
+                    deptChildrenMap.get(parentId).push(node.id);
+                }
+                if (node.children && node.children.length) {
+                    buildDepartmentMaps(node.children, node.id);
+                }
+            });
+        }
+
+        function loadDepartmentsForModal() {
+            const selector = document.getElementById('departmentSelector');
+            if (!selector) {
+                return;
+            }
+            
+            if (departmentTreeData.length > 0) {
+                deptChildrenMap.clear();
+                allDepartmentIds = [];
+                buildDepartmentMaps(departmentTreeData);
+                renderDepartmentTree(departmentTreeData);
+                return;
+            }
+            
+            selector.innerHTML = '<div class="loading">加载部门列表...</div>';
+            allDepartmentIds = [];
+            
+            fetch('/api/form-department-permission/departments/tree')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        departmentTreeData = Array.isArray(data.data) ? data.data : [];
+                        deptChildrenMap.clear();
+                        buildDepartmentMaps(departmentTreeData);
+                        renderDepartmentTree(departmentTreeData);
+                    } else {
+                        selector.innerHTML = `<div class="error">加载部门列表失败: ${data.message}</div>`;
+                    }
+                })
+                .catch(error => {
+                    console.error('Load department tree error', error);
+                    selector.innerHTML = `<div class="error">加载部门列表失败: ${error.message}</div>`;
+                });
+        }
+
+        function renderDepartmentTree(treeData) {
+            const selector = document.getElementById('departmentSelector');
+            if (!selector) {
+                return;
+            }
+            
+            if (!treeData || treeData.length === 0) {
+                selector.innerHTML = '<div class="loading">未找到部门信息</div>';
+                return;
+            }
+            
+            const buildTree = (nodes) => {
+                let html = '<ul class="dept-tree">';
+                nodes.forEach(node => {
+                    const hasChildren = node.children && node.children.length;
+                    html += `
+                        <li class="dept-node" data-node-id="${node.id}">
+                            <div class="dept-node-header">
+                                ${hasChildren ? `<button type="button" class="dept-toggle" data-node-id="${node.id}">-</button>` : '<span style="display:inline-block;width:16px;"></span>'}
+                                <label>
+                                    <input type="checkbox" class="dept-checkbox" value="${node.id}" id="dept_${node.id}">
+                                    ${node.name} <span style="color:#999;font-size:12px;">(${node.type === 'Account' ? '单位' : '部门'})</span>
+                                </label>
+                            </div>
+                            ${hasChildren ? buildTree(node.children) : ''}
+                        </li>
+                    `;
+                });
+                html += '</ul>';
+                return html;
+            };
+
+            selector.innerHTML = buildTree(treeData);
+        }
+
+        function setSelectedDepartments(selectedIds) {
+            selectedIds.forEach(id => {
+                const checkbox = document.getElementById(`dept_${id}`);
+                if (checkbox) {
+                    checkbox.checked = true;
+                    cascadeSelectChildren(id, true);
+                }
+            });
+        }
+
+        function selectAllDepartments() {
+            const checkboxes = document.querySelectorAll('#departmentSelector input[type="checkbox"]');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = true;
+            });
+        }
+
+        function clearDepartmentSelection() {
+            const checkboxes = document.querySelectorAll('#departmentSelector input[type="checkbox"]');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = false;
+            });
+        }
+
+        function cascadeSelectChildren(id, checked) {
+            const children = deptChildrenMap.get(id) || [];
+            children.forEach(childId => {
+                const childCheckbox = document.getElementById(`dept_${childId}`);
+                if (childCheckbox) {
+                    childCheckbox.checked = checked;
+                }
+                cascadeSelectChildren(childId, checked);
+            });
+        }
+
+        function savePermissionConfig() {
+            if (!currentEditingForm) {
+                alert('无效的表单信息');
+                return;
+            }
+            
+            const allModeRadio = document.querySelector('input[name="accessMode"][value="all"]');
+            let isAllAccess = allModeRadio.checked;
+            
+            let departmentIds = [];
+            if (!isAllAccess) {
+                const checkedBoxes = document.querySelectorAll('#departmentSelector input[type="checkbox"]:checked');
+            departmentIds = Array.from(checkedBoxes).map(cb => cb.value);
+                
+                if (departmentIds.length === 0) {
+                    alert('请至少选择一个部门，或者选择"所有部门都可以访问"');
+                    return;
+                }
+            }
+            
+            if (!isAllAccess && departmentIds.length >= allDepartmentIds.length) {
+                if (confirm('已选择所有部门，是否改为“所有部门都可以访问”？')) {
+                    isAllAccess = true;
+                }
+            }
+
+            const payload = {
+                sourceType: currentEditingForm.type,
+                sourceId: currentEditingForm.id,
+                departmentIds: isAllAccess ? [] : departmentIds,
+                creatorId: currentUserId && !isNaN(parseInt(currentUserId, 10)) ? parseInt(currentUserId, 10) : null
+            };
+            
+            fetch('/api/form-department-permission/save', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('保存成功');
+                    closePermissionModal();
+                    loadFormPermissions();
+                } else {
+                    alert('保存失败: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Save permission error', error);
+                alert('保存失败: ' + error.message);
+            });
+        }
+
+        function closePermissionModal() {
+            document.getElementById('permissionModal').style.display = 'none';
+            currentEditingForm = null;
+            
+            // 重置表单
+            document.querySelector('input[name="accessMode"][value="all"]').checked = true;
+            document.querySelector('input[name="accessMode"][value="restricted"]').checked = false;
+            document.getElementById('departmentSelection').style.display = 'none';
+            clearDepartmentSelection();
+        }
+
+        // 绑定权限搜索回车键
+        document.addEventListener('DOMContentLoaded', function() {
+            const permissionSearchInput = document.getElementById('permissionSearchInput');
+            if (permissionSearchInput) {
+                permissionSearchInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        searchFormPermissions();
+                    }
+                });
+            }
+            
+            // 点击模态框外部关闭
+            window.addEventListener('click', function(event) {
+                const modal = document.getElementById('permissionModal');
+                if (event.target === modal) {
+                    closePermissionModal();
+                }
+            });
         });
     </script>
 </body>

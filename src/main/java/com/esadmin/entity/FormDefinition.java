@@ -1,5 +1,7 @@
 package com.esadmin.entity;
 
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import javax.persistence.*;
 import java.util.Map;
 
@@ -8,6 +10,7 @@ import java.util.Map;
 public class FormDefinition {
 
     @Id
+    @JsonSerialize(using = ToStringSerializer.class)
     @Column(name = "ID")
     private Long id;
 
