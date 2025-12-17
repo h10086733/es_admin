@@ -480,6 +480,37 @@
             gap: 10px;
             align-items: center;
         }
+
+        .preview-table-wrapper {
+            max-height: 400px;
+            overflow: auto;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            background: #fff;
+        }
+
+        .preview-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .preview-table th,
+        .preview-table td {
+            border: 1px solid #e9ecef;
+            padding: 8px;
+            font-size: 13px;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        .preview-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+
+        .preview-table tr:nth-child(even) {
+            background: #fcfcfc;
+        }
         
         .modal {
             display: none;
@@ -761,6 +792,18 @@
                 </div>
             </div>
         </div>
+
+        <div id="excelDataPreviewModal" class="modal">
+            <div class="modal-content" style="max-width: 900px;">
+                <div class="modal-header">
+                    <h3>Excel数据预览</h3>
+                    <button class="modal-close" onclick="closeExcelDataPreview()">&times;</button>
+                </div>
+                <div id="excelDataPreviewBody">
+                    <div class="loading">暂无数据</div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -833,7 +876,7 @@
                                             <div style="font-size: 80px; margin-bottom: 20px;">🔒</div>
                                             <h1 style="color: #dc3545; margin-bottom: 20px; font-size: 32px;">无权限访问</h1>
                                             <p style="color: #666; font-size: 18px; line-height: 1.6; margin-bottom: 15px;">
-                                                您的账号 <strong style="color: #333;">${currentUserId}</strong> 暂无访问权限
+                                                您的账号 暂无访问权限
                                             </p>
                                             <p style="color: #999; font-size: 14px;">
                                                 如需开通权限，请联系系统管理员
@@ -862,14 +905,8 @@
                     }
                 } catch (error) {
                     console.warn('权限检查出错:', error);
-                    // 如果API调用失败，fallback到原来的逻辑
-                    const isAdmin = params.get('admin') === 'true';
-                    isAdminUser = currentUserId === '-6455719968899446074' && isAdmin;
-                    hasViewPermission = true; // 检查失败时默认允许（兼容性）
                 }
-                
-                const adminBadge = isAdminUser ? ' <span style="background: #28a745; color: white; padding: 2px 6px; border-radius: 3px; font-size: 12px;">管理员</span>' : '';
-                noticeEl.innerHTML = `当前用户: <strong>${currentUserId}</strong>${adminBadge}`;
+                noticeEl.innerHTML = '';
             } else {
                 noticeEl.innerHTML = '<div class="error" style="margin: 0;">缺少用户ID，请通过带有user_id参数的链接访问本页面。</div>';
             }
@@ -1977,6 +2014,7 @@
                             <div class="form-meta">列: ${columnPreview}</div>
                         </div>
                         <div class="form-actions">
+                            <button class="btn-small btn-primary" onclick="previewImportedExcel('${item.tableName}', '${displayName}')">预览前5行</button>
                             <button class="btn-small btn-danger" onclick="deleteExcelImport('${item.tableName}', '${displayName}')">删除</button>
                         </div>
                     </div>
@@ -2036,6 +2074,88 @@
                 button.disabled = false;
                 button.textContent = originalText;
             });
+        }
+
+        function previewImportedExcel(tableName, displayName) {
+            if (!tableName) {
+                alert('无效的表名');
+                return;
+            }
+
+            const modal = document.getElementById('excelDataPreviewModal');
+            const body = document.getElementById('excelDataPreviewBody');
+            if (!modal || !body) {
+                return;
+            }
+
+            modal.style.display = 'block';
+            body.innerHTML = '<div class="loading">加载数据预览...</div>';
+
+            fetch(`/api/excel/${encodeURIComponent(tableName)}/preview?rows=5`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        renderExcelDataPreview(data.data, displayName);
+                    } else {
+                        body.innerHTML = `<div class="error">加载预览失败: ${data.message || '未知错误'}</div>`;
+                    }
+                })
+                .catch(error => {
+                    console.error('Preview excel data error', error);
+                    body.innerHTML = `<div class="error">加载预览失败: ${error.message}</div>`;
+                });
+        }
+
+        function renderExcelDataPreview(previewData, displayName) {
+            const body = document.getElementById('excelDataPreviewBody');
+            if (!body) {
+                return;
+            }
+
+            if (!previewData || !previewData.columns || previewData.columns.length === 0) {
+                body.innerHTML = '<div class="error">未找到列信息，无法展示预览</div>';
+                return;
+            }
+
+            const infoHtml = `
+                <div class="form-meta" style="margin-bottom: 10px;">
+                    <div><strong>数据源:</strong> ${displayName || previewData.displayName || previewData.tableName}</div>
+                    <div><strong>数据库表:</strong> ${previewData.tableName}</div>
+                    <div><strong>工作表:</strong> ${previewData.sheetName || '未知'}</div>
+                    <div><strong>总行数:</strong> ${previewData.totalRows || 0} 行 | 预览: 前 ${previewData.previewRows || 0} 行</div>
+                </div>
+            `;
+
+            let tableHtml = '<div class="preview-table-wrapper"><table class="preview-table"><thead><tr>';
+            previewData.columns.forEach(col => {
+                const header = col.header || col.columnName;
+                tableHtml += `<th title="${col.columnName}">${header}</th>`;
+            });
+            tableHtml += '</tr></thead><tbody>';
+
+            if (previewData.data && previewData.data.length > 0) {
+                previewData.data.forEach(row => {
+                    tableHtml += '<tr>';
+                    previewData.columns.forEach(col => {
+                        const value = row[col.columnName] || '';
+                        tableHtml += `<td>${value}</td>`;
+                    });
+                    tableHtml += '</tr>';
+                });
+            } else {
+                tableHtml += `<tr><td colspan="${previewData.columns.length}" style="text-align:center;">暂无数据</td></tr>`;
+            }
+
+            tableHtml += '</tbody></table></div>';
+
+            body.innerHTML = infoHtml + tableHtml;
+        }
+
+        function closeExcelDataPreview() {
+            const modal = document.getElementById('excelDataPreviewModal');
+            if (modal) {
+                modal.style.display = 'none';
+            }
         }
         
         // 页面加载时的处理

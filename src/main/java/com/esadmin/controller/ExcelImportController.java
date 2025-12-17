@@ -151,4 +151,26 @@ public class ExcelImportController {
             return ResponseEntity.status(500).body(response);
         }
     }
+
+    @GetMapping("/{tableName}/preview")
+    public ResponseEntity<Map<String, Object>> previewImportedData(@PathVariable String tableName,
+                                                                   @RequestParam(value = "rows", defaultValue = "5") int rows) {
+        Map<String, Object> response = new HashMap<>();
+        try {
+            Map<String, Object> preview = excelImportService.previewImportedData(tableName, rows);
+            response.put("success", true);
+            response.put("data", preview);
+            response.put("message", "预览成功");
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(response);
+        } catch (Exception e) {
+            log.error("导入数据预览失败", e);
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
+    }
 }

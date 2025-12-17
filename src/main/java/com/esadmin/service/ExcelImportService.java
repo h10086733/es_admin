@@ -39,6 +39,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 /**
  * Excel 数据导入服务：负责解析Excel、动态建表、写入数据库并同步到Elasticsearch。
@@ -202,6 +203,75 @@ public class ExcelImportService {
     }
 
     /**
+     * 预览已导入表中的前N条数据。
+     */
+    public Map<String, Object> previewImportedData(String tableName, int previewRows) {
+        if (StringUtils.isBlank(tableName)) {
+            throw new IllegalArgumentException("表名不能为空");
+        }
+
+        String normalizedTable = tableName.trim().toUpperCase(Locale.ROOT);
+        if (!normalizedTable.matches("[A-Z0-9_]+")) {
+            throw new IllegalArgumentException("表名格式不正确");
+        }
+
+        int rowsToFetch = Math.max(1, Math.min(previewRows, 20));
+
+        ensureMetadataTable();
+        ExcelImportMetadata metadata = findMetadata(normalizedTable);
+        if (metadata == null) {
+            throw new IllegalArgumentException("未找到对应的导入记录");
+        }
+
+        if (!checkTableExists(normalizedTable)) {
+            throw new IllegalArgumentException("数据表不存在，可能已被删除");
+        }
+
+        Map<String, String> columnLabels = metadata.getColumnLabels();
+        if (columnLabels == null || columnLabels.isEmpty()) {
+            columnLabels = getColumnLabels(normalizedTable);
+        }
+
+        String sql = "SELECT * FROM " + normalizedTable + " ORDER BY ID LIMIT ?";
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, rowsToFetch);
+
+        List<Map<String, String>> previewData = new ArrayList<>();
+        if (!rows.isEmpty() && (columnLabels == null || columnLabels.isEmpty())) {
+            // 没有列信息时，按照查询结果的列进行展示
+            Map<String, Object> firstRow = rows.get(0);
+            columnLabels = firstRow.keySet().stream()
+                .collect(Collectors.toMap(k -> k, k -> k, (a, b) -> a, LinkedHashMap::new));
+        }
+
+        for (Map<String, Object> row : rows) {
+            Map<String, String> dataRow = new LinkedHashMap<>();
+            for (String column : columnLabels.keySet()) {
+                Object value = row.get(column);
+                dataRow.put(column, value == null ? "" : String.valueOf(value));
+            }
+            previewData.add(dataRow);
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("tableName", normalizedTable);
+        result.put("displayName", StringUtils.defaultIfBlank(metadata.getDisplayName(), normalizedTable));
+        result.put("sheetName", metadata.getSheetName());
+        result.put("totalRows", metadata.getRowCount());
+        result.put("previewRows", previewData.size());
+        result.put("columns", columnLabels.entrySet().stream()
+                .map(entry -> {
+                    Map<String, String> map = new HashMap<>();
+                    map.put("columnName", entry.getKey());
+                    map.put("header", entry.getValue());
+                    return map;
+                })
+                .collect(Collectors.toList()));
+        result.put("data", previewData);
+
+        return result;
+    }
+
+    /**
      * 查询所有导入记录。
      */
     public List<ExcelImportMetadata> listImports() {
@@ -340,6 +410,42 @@ public class ExcelImportService {
             return jdbcTemplate.queryForObject(sql, String.class, tableName);
         } catch (EmptyResultDataAccessException ex) {
             return tableName;
+        }
+    }
+
+    private ExcelImportMetadata findMetadata(String tableName) {
+        try {
+            String sql = "SELECT ID, TABLE_NAME, INDEX_NAME, DISPLAY_NAME, SHEET_NAME, COLUMN_INFO, ROW_COUNT, IMPORT_TIME " +
+                    "FROM " + META_TABLE + " WHERE TABLE_NAME = ?";
+            return jdbcTemplate.queryForObject(sql, (rs, rowNum) -> {
+                ExcelImportMetadata metadata = new ExcelImportMetadata();
+                metadata.setId(rs.getLong("ID"));
+                metadata.setTableName(rs.getString("TABLE_NAME"));
+                metadata.setIndexName(rs.getString("INDEX_NAME"));
+                metadata.setDisplayName(rs.getString("DISPLAY_NAME"));
+                metadata.setSheetName(rs.getString("SHEET_NAME"));
+                metadata.setRowCount(rs.getInt("ROW_COUNT"));
+
+                java.sql.Timestamp importTime = rs.getTimestamp("IMPORT_TIME");
+                if (importTime != null) {
+                    metadata.setImportTime(importTime.toLocalDateTime());
+                }
+
+                String columnInfo = rs.getString("COLUMN_INFO");
+                if (StringUtils.isNotBlank(columnInfo)) {
+                    try {
+                        Map<String, String> labels = objectMapper.readValue(columnInfo,
+                                new TypeReference<LinkedHashMap<String, String>>() {});
+                        metadata.setColumnLabels(labels);
+                    } catch (IOException e) {
+                        log.warn("解析列信息失败: tableName={}, error={}", tableName, e.getMessage());
+                    }
+                }
+
+                return metadata;
+            }, tableName);
+        } catch (EmptyResultDataAccessException ex) {
+            return null;
         }
     }
 

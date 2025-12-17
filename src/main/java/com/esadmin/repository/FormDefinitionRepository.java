@@ -13,6 +13,7 @@ import java.util.List;
 @Repository
 public interface FormDefinitionRepository extends JpaRepository<FormDefinition, Long> {
     
+    @Query("SELECT f FROM FormDefinition f WHERE f.deleteFlag = 0 and form_type=6 and appbind_info LIKE '{\"formCode\":\"SGZB%' ")
     List<FormDefinition> findByDeleteFlag(Integer deleteFlag);
     
     @Query("SELECT f FROM FormDefinition f WHERE f.deleteFlag = 0  and form_type=6 and appbind_info LIKE '{\"formCode\":\"SGZB%' AND f.name LIKE %:search%")
